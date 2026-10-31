@@ -1,0 +1,61 @@
+name: workbuddy-dispatch
+
+on:
+  workflow_dispatch:
+    inputs:
+      task:
+        description: Task description for WorkBuddy to build
+        required: true
+  issue_comment:
+    types: [created]
+
+permissions:
+  contents: read
+
+jobs:
+  dispatch:
+    if: |
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'issue_comment' &&
+        (startsWith(github.event.comment.body, '/workbuddy build') ||
+         startsWith(github.event.comment.body, '/workbuddy respond')))
+    runs-on: ubuntu-latest
+    steps:
+      - name: Dispatch WorkBuddy
+        env:
+          WORKBUDDY_API_URL: ${{ vars.WORKBUDDY_API_URL }}
+          WORKBUDDY_API_TOKEN: ${{ secrets.WORKBUDDY_API_TOKEN }}
+          EVENT_NAME: ${{ github.event_name }}
+          COMMENT_BODY: ${{ github.event.comment.body }}
+          REPO: ${{ github.repository }}
+          TASK_INPUT: ${{ github.event.inputs.task }}
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+        run: |
+          set -euo pipefail
+
+          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+            kind="build"
+            task="$TASK_INPUT"
+            pr_number=""
+          elif [[ "$COMMENT_BODY" == /workbuddy\ build* ]]; then
+            kind="build"
+            task="${COMMENT_BODY#/workbuddy build }"
+            pr_number=""
+          else
+            kind="respond_to_reviews"
+            task=""
+            pr_number="$ISSUE_NUMBER"
+          fi
+
+          jq -n \
+            --arg kind "$kind" \
+            --arg repo "$REPO" \
+            --arg task "$task" \
+            --arg pr_number "$pr_number" \
+            '{kind: $kind, repo: $repo, task: $task, pr_number: $pr_number}' \
+            > payload.json
+
+          curl -fsS -X POST "$WORKBUDDY_API_URL/dispatch" \
+            -H "Authorization: Bearer $WORKBUDDY_API_TOKEN" \
+            -H "Content-Type: application/json" \
+            --data-binary @payload.json

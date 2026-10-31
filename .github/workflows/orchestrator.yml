@@ -1,0 +1,45 @@
+name: multi-agent-orchestrator
+
+on:
+  pull_request:
+    types: [labeled]
+
+permissions:
+  contents: read
+
+jobs:
+  software-review:
+    if: github.event.label.name == 'codex-software-review'
+    runs-on: ubuntu-latest
+    concurrency:
+      group: codex-software-review-${{ github.event.pull_request.number }}
+      cancel-in-progress: true
+    steps:
+      - uses: actions/checkout@v4
+      - name: Post software review trigger
+        env:
+          GH_TOKEN: ${{ secrets.CODEX_TRIGGER_PAT }}
+          PROMPT_FILE: .github/prompts/software-review.md
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          prompt="$(cat "$PROMPT_FILE")"
+          gh api "repos/$REPO/issues/$PR_NUMBER/comments" -f body="$prompt"
+
+  methodology-review:
+    if: github.event.label.name == 'codex-methodology-review'
+    runs-on: ubuntu-latest
+    concurrency:
+      group: codex-methodology-review-${{ github.event.pull_request.number }}
+      cancel-in-progress: true
+    steps:
+      - uses: actions/checkout@v4
+      - name: Post methodology review trigger
+        env:
+          GH_TOKEN: ${{ secrets.CODEX_TRIGGER_PAT }}
+          PROMPT_FILE: .github/prompts/methodology-review.md
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          prompt="$(cat "$PROMPT_FILE")"
+          gh api "repos/$REPO/issues/$PR_NUMBER/comments" -f body="$prompt"
