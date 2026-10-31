@@ -24,6 +24,16 @@ class TestMovingAverage(unittest.TestCase):
     def test_empty_series(self):
         self.assertEqual(moving_average([], 1), [])
 
+    def test_large_magnitude_stability(self):
+        data = [1e16, 1.0, 1.0, 1.0, 1.0]
+        self.assertEqual(moving_average(data, 2), [5e15, 1.0, 1.0, 1.0])
+
+    def test_matches_naive_reference(self):
+        data = [1.0, 2.0, 4.0, 8.0, 16.0]
+        window = 3
+        expected = [sum(data[i : i + window]) / window for i in range(len(data) - window + 1)]
+        self.assertEqual(moving_average(data, window), expected)
+
 
 if __name__ == "__main__":
     unittest.main()
