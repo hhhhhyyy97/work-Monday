@@ -42,7 +42,7 @@ test("runs planning, parallel review, verification, and delivery in an isolated 
   process.env.AGENTFLOW_RUNS_ROOT = runsRoot;
   try {
     const state = await runWorkflow({
-      task: "Document the test repository.",
+      task: "记录测试仓库的说明。",
       workspace: source,
       provider: "mock",
       maxRounds: 1,
@@ -77,7 +77,8 @@ test("runs planning, parallel review, verification, and delivery in an isolated 
       path.join(store.runDir(state.id), "artifacts", "final-report.md"),
       "utf8",
     );
-    assert.match(report, /Status: PASS/);
+    assert.match(report, /状态：通过/);
+    assert.match(report, /评审结论/);
     assert.match(report, /verified/);
   } finally {
     if (previousRoot === undefined) delete process.env.AGENTFLOW_RUNS_ROOT;
@@ -92,7 +93,7 @@ test("waits for human approval before completing", async () => {
   process.env.AGENTFLOW_RUNS_ROOT = runsRoot;
   try {
     const running = runWorkflow({
-      task: "Exercise the approval gate.",
+      task: "验证人工批准闸门。",
       workspace: source,
       provider: "mock",
       maxRounds: 1,
@@ -111,7 +112,7 @@ test("waits for human approval before completing", async () => {
       await new Promise((resolve) => setTimeout(resolve, 20));
     }
     assert.equal(state.status, "waiting_approval");
-    await store.approve("approval-test", "test approval");
+    await store.approve("approval-test", "测试批准");
     const completed = await running;
     assert.equal(completed.status, "completed");
     assert.ok(completed.steps.some((step) => step.id === "approval" && step.status === "done"));

@@ -31,19 +31,19 @@ const DEFAULT_CONFIG = {
 const REVIEW_META = {
   software: {
     role: "software-reviewer",
-    label: "Software Review",
+    label: "软件评审",
     prompt: "software-review.md",
     color: "#0f766e",
   },
   methodology: {
     role: "methodology-reviewer",
-    label: "Methodology Review",
+    label: "方法论评审",
     prompt: "methodology-review.md",
     color: "#8b5e34",
   },
   security: {
     role: "security-reviewer",
-    label: "Security Review",
+    label: "安全评审",
     prompt: "security-review.md",
     color: "#9f3b45",
   },
@@ -97,7 +97,7 @@ async function gitOutput(cwd, args) {
     });
     return stdout.trim();
   } catch (error) {
-    error.message = `git ${args.join(" ")} failed in ${cwd}\n${error.message}`;
+    error.message = `在 ${cwd} 执行 git ${args.join(" ")} 失败\n${error.message}`;
     throw error;
   }
 }
@@ -142,55 +142,56 @@ function reviewerPrompt(review, context) {
   const names = review.findings
     .map((finding) => `[${finding.severity}] ${finding.file}:${finding.line} ${finding.title}`)
     .join("\n");
-  return `Review round ${context.round}
-Base commit: ${context.baseSha}
-Worktree: ${context.workspace}
+  return `评审轮次：第 ${context.round} 轮
+基线提交：${context.baseSha}
+工作树：${context.workspace}
 
-Task:
+任务：
 ${context.task}
 
-Inspect the current worktree and \`git diff ${context.baseSha}\`. Review the task diff, not unrelated pre-existing history.
+检查当前工作树和 \`git diff ${context.baseSha}\`。只评审本次任务 diff，不评审无关的历史改动。
 
-Builder summary:
+构建者摘要：
 ${trimMiddle(context.builderOutput, 12000)}
 
-Verification:
+验证结果：
 ${trimMiddle(context.verificationSummary, 12000)}
 
-Previous review findings:
-${names || "None"}
+之前的评审意见：
+${names || "无"}
 
-Review focus for this role: ${review.label}.
-Return only JSON matching the supplied schema.`;
+本角色评审重点：${review.label}。
+所有面向用户的文本必须使用简体中文；verdict 和 severity 保持 Schema 要求。
+只返回符合指定 JSON Schema 的 JSON。`;
 }
 
 function parseReview(text, role) {
   try {
     const parsed = parseJsonLoose(text);
     if (!["pass", "changes", "block"].includes(parsed.verdict)) {
-      throw new Error("Invalid verdict.");
+      throw new Error("verdict 枚举无效。");
     }
     if (!Array.isArray(parsed.findings) || !Array.isArray(parsed.checks)) {
-      throw new Error("findings and checks must be arrays.");
+      throw new Error("findings 和 checks 必须是数组。");
     }
     return parsed;
   } catch (error) {
     return {
       verdict: "changes",
-      summary: `${role} returned an unparseable review: ${error.message}`,
+      summary: `${role} 返回了无法解析的评审结果：${error.message}`,
       findings: [
         {
           severity: "P1",
-          file: "(review artifact)",
+          file: "（评审产物）",
           line: 1,
-          title: "Review output did not match the required schema",
+          title: "评审输出不符合要求的 Schema",
           evidence: trimMiddle(text, 2500),
-          recommendation: "Re-run the review with a valid JSON response.",
+          recommendation: "使用有效的 JSON 输出重新执行评审。",
         },
       ],
       checks: [
         {
-          name: "review protocol",
+          name: "评审协议",
           status: "fail",
           evidence: error.message,
         },
@@ -211,7 +212,7 @@ function checksSummary(checks) {
   return checks
     .map(
       (check) =>
-        `${(check.exitCode === 0 ? "PASS" : "FAIL")} ${check.command} (exit ${check.exitCode}, ${check.durationMs}ms)\n${trimMiddle(
+        `${(check.exitCode === 0 ? "通过" : "失败")} ${check.command}（退出码 ${check.exitCode}，耗时 ${check.durationMs}ms）\n${trimMiddle(
           `${check.stdout}\n${check.stderr}`.trim(),
           5500,
         )}`,
@@ -226,7 +227,7 @@ async function waitForApproval(store, runId, timeoutMs = 30 * 60 * 1000) {
     if (approval?.approved) return approval;
     await new Promise((resolve) => setTimeout(resolve, 600));
   }
-  throw new Error("Timed out waiting for human approval.");
+  throw new Error("等待人工批准超时。");
 }
 
 export async function runWorkflow(options) {
@@ -299,7 +300,7 @@ export async function runWorkflow(options) {
       stepId: step.id,
       label: step.label,
       parentIds: step.parentIds || [],
-      message: `${step.label} started`,
+      message: `开始执行：${step.label}`,
     });
     return state.steps.find((item) => item.id === step.id);
   };
@@ -317,7 +318,7 @@ export async function runWorkflow(options) {
       stepId: step.id,
       label: step.label,
       status: step.status,
-      message: patch.summary || `${step.label} finished`,
+      message: patch.summary || `已完成：${step.label}`,
     });
   };
 
@@ -333,7 +334,7 @@ export async function runWorkflow(options) {
       role: step.role,
       stepId: step.id,
       label: step.label,
-      message: error.message,
+      message: `执行失败：${error.message}`,
     });
   };
 
@@ -416,22 +417,22 @@ export async function runWorkflow(options) {
       type: "workspace.ready",
       role: "orchestrator",
       message: execution.isolated
-        ? `Isolated worktree ready on ${execution.branch}`
-        : "Running in the source workspace",
+        ? `隔离 worktree 已就绪：${execution.branch}`
+        : "正在源工作区中运行",
       data: execution,
     });
 
     const planner = await executeAgentStep({
       id: "plan",
       role: "planner",
-      label: "Plan & acceptance criteria",
+      label: "规划与验收标准",
       prompt: `${await readPrompt("planner.md")}
 
-User task:
+用户任务：
 ${options.task}
 
-Repository: ${execution.path}
-Base commit: ${execution.baseSha}`,
+仓库：${execution.path}
+基线提交：${execution.baseSha}`,
       schema: "plan",
     });
     let plan;
@@ -442,7 +443,7 @@ Base commit: ${execution.baseSha}`,
         summary: planner.text,
         assumptions: [],
         work_items: [],
-        risks: [`Planner output was not structured: ${error.message}`],
+        risks: [`规划者输出不是有效结构化结果：${error.message}`],
         verification_strategy: [],
       };
     }
@@ -452,27 +453,27 @@ Base commit: ${execution.baseSha}`,
       executeAgentStep({
         id: "scout",
         role: "scout",
-        label: "Repository scan",
+        label: "仓库扫描",
         parentIds: ["plan"],
         prompt: `${await readPrompt("scout.md")}
 
-User task:
+用户任务：
 ${options.task}
 
-Plan:
+规划：
 ${jsonBlock(plan)}`,
       }),
       executeAgentStep({
         id: "architect",
         role: "architect",
-        label: "Implementation design",
+        label: "实现方案设计",
         parentIds: ["plan"],
         prompt: `${await readPrompt("architect.md")}
 
-User task:
+用户任务：
 ${options.task}
 
-Plan:
+规划：
 ${jsonBlock(plan)}`,
       }),
     ]);
@@ -493,37 +494,37 @@ ${jsonBlock(plan)}`,
         round === 1
           ? `${await readPrompt("builder.md")}
 
-User task:
+用户任务：
 ${options.task}
 
-Planner:
+规划者：
 ${jsonBlock(plan)}
 
-Repository Scout:
+仓库侦察者：
 ${scout.text}
 
-Architect:
+架构师：
 ${architect.text}`
           : `${await readPrompt("fixer.md")}
 
-User task:
+用户任务：
 ${options.task}
 
-Plan:
+规划：
 ${jsonBlock(plan)}
 
-Previous builder summary:
+上一轮构建者摘要：
 ${trimMiddle(latestBuilderText, 12000)}
 
-Review findings:
+评审意见：
 ${previousReviewText}
 
-Verification failures:
+验证失败：
 ${trimMiddle(checksSummary(latestChecks), 12000)}`;
       const built = await executeAgentStep({
         id: buildId,
         role: round === 1 ? "builder" : "fixer",
-        label: round === 1 ? "Build implementation" : `Fix review round ${round - 1}`,
+        label: round === 1 ? "实现构建" : `第 ${round - 1} 轮评审修复`,
         parentIds,
         prompt: buildPrompt,
         writeAccess: true,
@@ -535,7 +536,7 @@ ${trimMiddle(checksSummary(latestChecks), 12000)}`;
       try {
         diff = await gitOutput(state.executionWorkspace, ["diff", execution.baseSha]);
       } catch (error) {
-        diff = `Unable to read task diff: ${error.message}`;
+        diff = `无法读取任务 diff：${error.message}`;
       }
       await store.artifact(runId, `round-${round}.patch`, diff);
 
@@ -546,7 +547,7 @@ ${trimMiddle(checksSummary(latestChecks), 12000)}`;
         const verificationStep = await addStep({
           id: `verify-${round}-${index + 1}`,
           role: "verifier",
-          label: `Verify: ${command}`,
+          label: `运行验证：${command}`,
           parentIds: [buildId],
         });
         const result = await runCommand(command, {
@@ -558,14 +559,14 @@ ${trimMiddle(checksSummary(latestChecks), 12000)}`;
         await store.artifact(
           runId,
           `verify-${round}-${index + 1}.log`,
-          `$ ${command}\n\nSTDOUT\n${result.stdout}\n\nSTDERR\n${result.stderr}\n\nEXIT ${result.exitCode}\n`,
+          `$ ${command}\n\n标准输出\n${result.stdout}\n\n标准错误\n${result.stderr}\n\n退出码 ${result.exitCode}\n`,
         );
         if (result.exitCode === 0) {
           await finishStep(verificationStep, {
-            summary: `Passed in ${result.durationMs}ms`,
+            summary: `验证通过，耗时 ${result.durationMs}ms`,
           });
         } else {
-          await failStep(verificationStep, new Error(`Exit code ${result.exitCode}`));
+          await failStep(verificationStep, new Error(`退出码 ${result.exitCode}`));
         }
       }
       state.verification.push({ round, checks: latestChecks });
@@ -573,14 +574,14 @@ ${trimMiddle(checksSummary(latestChecks), 12000)}`;
       await update({ phase: "reviewing" });
       const verificationSummary = latestChecks.length
         ? checksSummary(latestChecks)
-        : "No deterministic commands were configured.";
+        : "未配置确定性验证命令。";
       const reviewJobs = config.reviewers.map(async (reviewName) => {
         const meta = REVIEW_META[reviewName];
         const reviewStepId = `review-${round}-${reviewName}`;
         const reviewed = await executeAgentStep({
           id: reviewStepId,
           role: meta.role,
-          label: `${meta.label} · round ${round}`,
+          label: `${meta.label} · 第 ${round} 轮`,
           parentIds: [buildId],
           prompt: `${await readPrompt(meta.prompt)}
 
@@ -618,7 +619,7 @@ ${reviewerPrompt(
       const reviewSummaryStep = await addStep({
         id: `review-${round}`,
         role: "coordinator",
-        label: `Quality gate · round ${round}`,
+        label: `质量闸门 · 第 ${round} 轮`,
         parentIds: latestReviews.map((_, index) => `review-${round}-${config.reviewers[index]}`),
       });
       const verificationFailed = latestChecks.some((check) => check.exitCode !== 0);
@@ -630,7 +631,7 @@ ${reviewerPrompt(
             `## ${review.label}: ${review.verdict}\n${review.summary}\n${review.findings
               .map(
                 (finding) =>
-                  `- [${finding.severity}] ${finding.file}:${finding.line} ${finding.title}\n  Evidence: ${finding.evidence}\n  Recommendation: ${finding.recommendation}`,
+                  `- [${finding.severity}] ${finding.file}:${finding.line} ${finding.title}\n  证据：${finding.evidence}\n  建议：${finding.recommendation}`,
               )
               .join("\n")}`,
         )
@@ -638,8 +639,8 @@ ${reviewerPrompt(
       await finishStep(reviewSummaryStep, {
         status: needsFix ? "changes" : "done",
         summary: needsFix
-          ? "Changes requested by at least one reviewer or verification command."
-          : "All required review and verification gates passed.",
+          ? "至少一个评审者或验证命令要求修改。"
+          : "所有必需的评审和验证闸门均已通过。",
       });
       if (!needsFix) break;
       if (round === config.maxRounds) break;
@@ -650,7 +651,7 @@ ${reviewerPrompt(
       const approvalStep = await addStep({
         id: "approval",
         role: "human",
-        label: "Human approval",
+        label: "人工批准",
         parentIds: [`review-${state.rounds}`],
       });
       await update({ status: "waiting_approval" });
@@ -658,41 +659,42 @@ ${reviewerPrompt(
         type: "run.waiting_approval",
         role: "human",
         stepId: "approval",
-        label: "Human approval",
-        message: "All checks passed. Approve the isolated worktree to finish delivery.",
+        label: "人工批准",
+        message: "所有检查均已通过。批准隔离 worktree 后完成交付。",
       });
       const approval = await waitForApproval(store, runId);
       await finishStep(approvalStep, {
-        summary: approval.note ? `Approved: ${approval.note}` : "Approved by human.",
+        summary: approval.note ? `人工批准：${approval.note}` : "已由人工批准。",
       });
     }
 
     const report = [
-      `# AgentFlow run ${runId}`,
+      `# AgentFlow 运行报告 ${runId}`,
       "",
-      `Status: ${finalVerdict === "pass" ? "PASS" : "CHANGES REQUIRED"}`,
-      `Task: ${options.task}`,
-      `Provider: ${provider.name}`,
-      `Source workspace: ${workspace}`,
-      `Execution workspace: ${state.executionWorkspace}`,
-      `Branch: ${state.branch || "(in-place)"}`,
-      `Base: ${state.baseSha}`,
-      `Rounds: ${state.rounds}`,
+      `状态：${finalVerdict === "pass" ? "通过" : "需要修改"}`,
+      `任务：${options.task}`,
+      `执行器：${provider.name}`,
+      `源工作区：${workspace}`,
+      `执行工作区：${state.executionWorkspace}`,
+      `分支：${state.branch || "（原地运行）"}`,
+      `基线提交：${state.baseSha}`,
+      `轮次：${state.rounds}`,
       "",
-      "## Review verdicts",
+      "## 评审结论",
       ...latestReviews.map(
-        (review) => `- ${review.label}: **${review.verdict}** — ${review.summary}`,
+        (review) =>
+          `- ${review.label}：**${{ pass: "通过", changes: "需修改", block: "阻塞" }[review.verdict] || review.verdict}** — ${review.summary}`,
       ),
       "",
-      "## Verification",
+      "## 验证结果",
       latestChecks.length
         ? checksSummary(latestChecks)
-        : "No verification commands were configured. Configure `verifyCommands` before treating this as a release-quality run.",
+        : "未配置验证命令。在将此结果视为可发布质量前，请先配置 `verifyCommands`。",
       "",
-      "## Delivery",
+      "## 交付说明",
       state.isolated
-        ? `Changes remain in the isolated worktree. Review and merge the branch manually: ${state.branch}`
-        : "The workflow ran in place. Review the uncommitted diff before committing.",
+        ? `改动保留在隔离 worktree 中。请人工复核并合并分支：${state.branch}`
+        : "工作流在源工作区中运行。提交前请人工复核未提交的 diff。",
     ].join("\n");
     await store.artifact(runId, "final-report.md", report);
     if (!state.artifacts.includes("artifacts/final-report.md")) {
@@ -713,8 +715,8 @@ ${reviewerPrompt(
       status: finalStatus,
       message:
         finalVerdict === "pass"
-          ? "Workflow completed. Human merge is still required."
-          : `Review limit reached with ${latestReviews.length} verdicts. Changes are required.`,
+          ? "工作流已完成，仍需人工合并。"
+          : `已达到评审轮次上限，共收到 ${latestReviews.length} 条评审结论，仍需修改。`,
     });
     return state;
   } catch (error) {
@@ -726,7 +728,7 @@ ${reviewerPrompt(
     await emit({
       type: "run.failed",
       role: "orchestrator",
-      message: error.message,
+      message: `运行失败：${error.message}`,
     });
     throw error;
   }

@@ -7,21 +7,21 @@ const GITHUB_BASE = `https://github.com/${REPO.owner}/${REPO.name}`;
 const BLOB_BASE = `${GITHUB_BASE}/blob/main`;
 
 const agents = {
-  workbuddy: { id: "workbuddy", name: "WorkBuddy", role: "Builder · Kimi 3.1 Pro", color: "#2789c3" },
+  workbuddy: { id: "workbuddy", name: "WorkBuddy", role: "构建者 · Kimi 3.1 Pro", color: "#2789c3" },
   codex: { id: "codex", name: "Codex", role: "统筹 + 评审", color: "#0f766e" },
   actions: { id: "actions", name: "GitHub Actions", role: "编排器", color: "#b45309" },
-  human: { id: "human", name: "Human", role: "拍板 / 合并", color: "#64748b" },
-  planner: { id: "planner", name: "Planner", role: "任务拆解", color: "#3b6ea5" },
-  scout: { id: "scout", name: "Scout", role: "仓库侦察", color: "#7b61a8" },
-  architect: { id: "architect", name: "Architect", role: "方案设计", color: "#4b7c66" },
-  builder: { id: "builder", name: "Builder", role: "唯一写入者", color: "#2f76a8" },
-  fixer: { id: "fixer", name: "Fixer", role: "评审修复", color: "#2f76a8" },
-  softwareReviewer: { id: "softwareReviewer", name: "Software", role: "正确性审查", color: "#0f766e" },
-  methodologyReviewer: { id: "methodologyReviewer", name: "Method", role: "方法论审查", color: "#8b5e34" },
-  securityReviewer: { id: "securityReviewer", name: "Security", role: "安全审查", color: "#9f3b45" },
-  verifier: { id: "verifier", name: "Verifier", role: "命令验证", color: "#b45309" },
-  coordinator: { id: "coordinator", name: "Coordinator", role: "质量闸门", color: "#465465" },
-  orchestrator: { id: "orchestrator", name: "Orchestrator", role: "流程控制", color: "#465465" },
+  human: { id: "human", name: "人工", role: "拍板 / 合并", color: "#64748b" },
+  planner: { id: "planner", name: "规划者", role: "任务拆解", color: "#3b6ea5" },
+  scout: { id: "scout", name: "仓库侦察", role: "代码与约束检查", color: "#7b61a8" },
+  architect: { id: "architect", name: "架构师", role: "方案设计", color: "#4b7c66" },
+  builder: { id: "builder", name: "构建者", role: "唯一写入者", color: "#2f76a8" },
+  fixer: { id: "fixer", name: "修复者", role: "评审修复", color: "#2f76a8" },
+  softwareReviewer: { id: "softwareReviewer", name: "软件评审", role: "正确性审查", color: "#0f766e" },
+  methodologyReviewer: { id: "methodologyReviewer", name: "方法论评审", role: "方法与口径审查", color: "#8b5e34" },
+  securityReviewer: { id: "securityReviewer", name: "安全评审", role: "安全审查", color: "#9f3b45" },
+  verifier: { id: "verifier", name: "验证者", role: "命令验证", color: "#b45309" },
+  coordinator: { id: "coordinator", name: "协调者", role: "质量闸门", color: "#465465" },
+  orchestrator: { id: "orchestrator", name: "编排器", role: "流程控制", color: "#465465" },
 };
 
 const flowRoleAgent = {
@@ -412,16 +412,59 @@ let flowLastStatus = null;
 
 const flowStatusText = {
   running: "团队执行中",
+  done: "已完成",
+  changes: "需要修改",
   waiting_approval: "等待人工批准",
   completed: "已通过，待合并",
   changes_required: "仍需修改",
   failed: "运行失败",
 };
 const flowReviewNames = {
-  software: "Software",
-  methodology: "Methodology",
-  security: "Security",
+  software: "软件评审",
+  methodology: "方法论评审",
+  security: "安全评审",
 };
+
+const flowPhaseNames = {
+  preparing: "准备中",
+  planning: "规划中",
+  building: "构建中",
+  fixing: "修复中",
+  verifying: "验证中",
+  reviewing: "评审中",
+  approval: "等待人工批准",
+  delivered: "已交付",
+  failed: "运行失败",
+};
+
+const legacyStepLabels = {
+  "Plan & acceptance criteria": "规划与验收标准",
+  "Repository scan": "仓库扫描",
+  "Implementation design": "实现方案设计",
+  "Build implementation": "实现构建",
+  "Human approval": "人工批准",
+};
+
+function flowPhaseText(phase) {
+  return flowPhaseNames[phase] || phase || "运行中";
+}
+
+function flowStepLabel(label) {
+  if (!label) return "";
+  if (legacyStepLabels[label]) return legacyStepLabels[label];
+  return label
+    .replace(/^Fix review round (\d+)$/i, "第 $1 轮评审修复")
+    .replace(/^Verify:\s*/i, "运行验证：")
+    .replace(/^(Software Review|Methodology Review|Security Review) · round (\d+)$/i, (_, name, round) => {
+      const local = {
+        "Software Review": "软件评审",
+        "Methodology Review": "方法论评审",
+        "Security Review": "安全评审",
+      }[name];
+      return `${local} · 第 ${round} 轮`;
+    })
+    .replace(/^Quality gate · round (\d+)$/i, "质量闸门 · 第 $1 轮");
+}
 
 function flowAgent(event) {
   return agents[flowRoleAgent[event.role]] || agents.orchestrator;
@@ -464,7 +507,8 @@ function flowNodeFromStep(step, animateBubble = false) {
   }
   const agent = agents[flowRoleAgent[step.role]] || agents.orchestrator;
   const layout = flowStepLayout(step);
-  const bubble = animateBubble ? message(agent, step.label) : null;
+  const displayLabel = flowStepLabel(step.label);
+  const bubble = animateBubble ? message(agent, displayLabel) : null;
   const n = addNode(agent, {
     id: `${flowRunId}:${step.id}`,
     key: step.id,
@@ -474,8 +518,8 @@ function flowNodeFromStep(step, animateBubble = false) {
     row: layout.row,
     branch: layout.branch,
     kind: layout.kind,
-    label: layout.label || step.label,
-    text: step.label,
+    label: layout.label || displayLabel,
+    text: displayLabel,
   }, bubble || document.createElement("div"));
   if (step.status === "done") n.dataset.state = "arrived";
   if (step.status === "failed" || step.status === "changes") n.dataset.state = "pending";
@@ -529,7 +573,7 @@ function clearFlowView(run) {
     message(agents.human, run.task, true);
     const note = document.createElement("div");
     note.className = "flow-note";
-    note.textContent = `Provider: ${run.provider} · 目标仓库: ${run.sourceWorkspace}`;
+    note.textContent = `执行器：${run.provider} · 目标仓库：${run.sourceWorkspace}`;
     $("#messages").append(note);
     if ((run.steps || []).length > 1) {
       const recap = document.createElement("section");
@@ -540,9 +584,9 @@ function clearFlowView(run) {
       for (const step of run.steps.slice(-12)) {
         const row = document.createElement("li");
         const label = document.createElement("strong");
-        label.textContent = step.label;
+        label.textContent = flowStepLabel(step.label);
         const summary = document.createElement("span");
-        summary.textContent = step.summary || step.status;
+        summary.textContent = step.summary || flowStatusText[step.status] || step.status;
         row.append(label, summary);
         list.append(row);
       }
@@ -632,7 +676,7 @@ async function pollFlow() {
     }
     flowLastStatus = run.status;
     $("#task-title").textContent = run.task;
-    $("#footer-help").textContent = `Planner 拆任务，Scout 与 Architect 并行调研，Builder 唯一写入，${(run.reviewers || []).map((name) => flowReviewNames[name] || name).join(" / ") || "独立 Reviewers"} 独立审查。`;
+    $("#footer-help").textContent = `规划者拆任务，仓库侦察与架构师并行调研，构建者唯一写入，${(run.reviewers || []).map((name) => flowReviewNames[name] || name).join(" / ") || "独立评审者"} 独立审查。`;
     $("#status").textContent = flowStatusText[run.status] || run.status;
     $("#graph-status").textContent =
       run.status === "waiting_approval"
@@ -645,7 +689,7 @@ async function pollFlow() {
               ? "运行失败"
               : run.phase === "reviewing"
                 ? "评审并行分叉中"
-                : run.phase || "运行中";
+                : flowPhaseText(run.phase);
     $("#approve").hidden = run.status !== "waiting_approval";
     $("#counts").textContent = `${(run.steps || []).length} 个节点`;
     if (run.status === "failed") $("#status").title = run.error || "";
@@ -685,13 +729,13 @@ async function selectFlowRun(runId) {
     flowLastStatus = run.status;
     flowLastSeq = Math.max(0, ...events.map((event) => event.seq));
     $("#task-title").textContent = run.task;
-    $("#footer-help").textContent = `Planner 拆任务，Scout 与 Architect 并行调研，Builder 唯一写入，${(run.reviewers || []).map((name) => flowReviewNames[name] || name).join(" / ") || "独立 Reviewers"} 独立审查。`;
+    $("#footer-help").textContent = `规划者拆任务，仓库侦察与架构师并行调研，构建者唯一写入，${(run.reviewers || []).map((name) => flowReviewNames[name] || name).join(" / ") || "独立评审者"} 独立审查。`;
     if (run.sourceWorkspace) {
       $("#flow-workspace").value = run.sourceWorkspace;
       localStorage.setItem("agentflow_workspace", run.sourceWorkspace);
     }
     $("#status").textContent = flowStatusText[run.status] || run.status;
-    $("#graph-status").textContent = run.phase || "运行中";
+    $("#graph-status").textContent = flowPhaseText(run.phase);
     $("#approve").hidden = run.status !== "waiting_approval";
     $("#flow-history").value = runId;
     loadFlowRuns();
@@ -766,7 +810,7 @@ function setMode(m) {
     $("#status").textContent = "AgentFlow";
     $("#graph-status").textContent = flowRunId ? "载入运行" : "等待任务";
     $("#task-title").textContent = "多 Agent 协作运行";
-    $("#footer-help").textContent = "Planner 拆任务，Scout 与 Architect 并行调研，Builder 唯一写入，三类 Reviewer 并行审查。";
+    $("#footer-help").textContent = "规划者拆任务，仓库侦察与架构师并行调研，构建者唯一写入，三类评审者并行审查。";
     const welcome = document.createElement("div");
     welcome.className = "welcome";
     welcome.innerHTML = "<span>↗</span><h3>从左侧启动一个 Agent 团队</h3><p>默认在独立 Git worktree 中运行；全绿后再由人决定是否合并。</p>";
@@ -833,7 +877,7 @@ $("#approve").addEventListener("click", async () => {
   try {
     await flowApi(`/api/agentflow/runs/${flowRunId}/approve`, {
       method: "POST",
-      body: JSON.stringify({ note: "Approved from Lancer workspace" }),
+      body: JSON.stringify({ note: "已从 Lancer 工作台批准" }),
     });
     $("#status").textContent = "已批准，正在交付";
     await selectFlowRun(flowRunId);

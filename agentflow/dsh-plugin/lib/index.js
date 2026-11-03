@@ -12,16 +12,16 @@ export const inject = ["subagents", "subprocess"];
 
 function textTask(prompt) {
   if (!Array.isArray(prompt) || prompt.length === 0) {
-    throw new Error(`${PLUGIN}: the task must contain text blocks`);
+    throw new Error(`${PLUGIN}：任务必须包含文本块`);
   }
   const texts = prompt.map((block) => {
     if (block?.type !== "text" || typeof block.text !== "string") {
-      throw new Error(`${PLUGIN}: the task must contain only text blocks`);
+      throw new Error(`${PLUGIN}：任务只能包含文本块`);
     }
     return block.text;
   });
   if (texts.every((text) => !text.trim())) {
-    throw new Error(`${PLUGIN}: the task must not be empty`);
+    throw new Error(`${PLUGIN}：任务内容不能为空`);
   }
   return texts.join("\n\n");
 }
@@ -82,12 +82,12 @@ function piArgv(readOnly) {
 }
 
 function taskPrompt(prompt, readOnly) {
-  return `You are a Pi coding subagent delegated by DeepSeek Harness.
-Work only inside the current workspace. Inspect the repository before acting.
-${readOnly ? "This is a read-only review task. Do not modify files." : "Implement and verify the requested work. Do not commit or merge."}
-Return a concise final report with files changed, checks run, and residual risks.
+  return `你是 DeepSeek Harness 委派的 Pi 编码子 Agent。
+只在当前工作区内工作。执行前先检查仓库。
+${readOnly ? "这是只读审查任务，不要修改文件。" : "实现并验证请求的工作，不要 commit 或 merge。"}
+最终报告必须使用简体中文，简洁说明改动文件、已运行检查和剩余风险。
 
-Task:
+任务：
 ${prompt}`;
 }
 
@@ -129,10 +129,10 @@ function childEnv(electronAsNode) {
 function createPiRun(request, ctx, readOnly) {
   const cwd = request.parent?.session?.header?.cwd;
   if (!cwd) {
-    throw new Error(`${PLUGIN}: parent session has no working directory`);
+    throw new Error(`${PLUGIN}：父会话没有工作目录`);
   }
   if (request.signal?.aborted) {
-    throw new Error(`${PLUGIN}: request was aborted before startup`);
+    throw new Error(`${PLUGIN}：请求在启动前已取消`);
   }
 
   const prompt = taskPrompt(textTask(request.prompt), readOnly);
@@ -173,18 +173,18 @@ function createPiRun(request, ctx, readOnly) {
     try {
       event = JSON.parse(line);
     } catch {
-      ctx.logger?.warn?.(`${PLUGIN}: ignored malformed Pi output`);
+      ctx.logger?.warn?.(`${PLUGIN}：已忽略格式错误的 Pi 输出`);
       return;
     }
     if (event.type === "tool_execution_start") {
-      ctx.logger?.info?.(`${PLUGIN}: ${name} running ${event.toolName || "tool"}`);
+      ctx.logger?.info?.(`${PLUGIN}：${name} 正在执行 ${event.toolName || "工具"}`);
     }
     if (event.type === "message_end" && event.message?.role === "assistant") {
       const text = messageText(event.message);
       if (text.trim()) lastAssistantText = text;
     }
     if (event.type === "auto_retry_end" && event.success === false) {
-      ctx.logger?.warn?.(`${PLUGIN}: ${name} retry failed: ${event.finalError || "unknown"}`);
+      ctx.logger?.warn?.(`${PLUGIN}：${name} 重试失败：${event.finalError || "未知错误"}`);
     }
     if (event.type === "agent_settled" && event.aborted === true) {
       cancelled = true;
@@ -210,7 +210,7 @@ function createPiRun(request, ctx, readOnly) {
       if (exitCode !== 0) {
         return {
           output: collect(),
-          diagnostic: `${PLUGIN}: Pi exited with code ${exitCode}`,
+          diagnostic: `${PLUGIN}：Pi 退出码 ${exitCode}`,
           stopReason: "error",
         };
       }
@@ -218,7 +218,7 @@ function createPiRun(request, ctx, readOnly) {
       if (output.length === 0) {
         return {
           output,
-          diagnostic: `${PLUGIN}: Pi completed without a final assistant response`,
+          diagnostic: `${PLUGIN}：Pi 已完成，但没有最终助手回复`,
           stopReason: "error",
         };
       }

@@ -6,5 +6,5 @@ export function createProvider(name) {
   if (name === "mock") return new MockProvider();
   if (name === "codex") return new CodexProvider();
   if (name === "pi") return new PiProvider();
-  throw new Error(`Unsupported provider: ${name}. Use codex, pi, or mock.`);
+  throw new Error(`不支持的 Provider：${name}。请使用 codex、pi 或 mock。`);
 }

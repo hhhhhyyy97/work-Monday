@@ -43,7 +43,7 @@ export class CodexProvider {
     }
     args.push("-");
 
-    onEvent?.({ type: "agent.started", message: `${role} started` });
+    onEvent?.({ type: "agent.started", message: `${role} 已启动` });
     const child = spawn(codexBinary(), args, {
       cwd,
       env: { ...process.env, NO_COLOR: "1" },
@@ -106,16 +106,16 @@ export class CodexProvider {
       const [code] = await once(child, "close");
       clearTimeout(timer);
       if (stdoutBuffer.trim()) handleLine(stdoutBuffer);
-      if (timedOut) throw new Error(`${role} timed out after ${timeoutMs}ms.`);
+      if (timedOut) throw new Error(`${role} 在 ${timeoutMs}ms 后超时。`);
       if (code !== 0) {
         throw new Error(
-          `${role} failed with exit code ${code}.${stderr ? `\n${stderr.slice(-4000)}` : ""}`,
+          `${role} 执行失败，退出码 ${code}。${stderr ? `\n${stderr.slice(-4000)}` : ""}`,
         );
       }
       try {
         return await readFile(lastMessagePath, "utf8");
       } catch (error) {
-        throw new Error(`${role} completed without a final message: ${error.message}`);
+        throw new Error(`${role} 已完成，但没有最终消息：${error.message}`);
       }
     } finally {
       clearTimeout(timer);

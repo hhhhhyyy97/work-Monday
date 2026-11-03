@@ -1,58 +1,51 @@
 ---
 name: pi-dsh-team
-description: Run a multi-agent software workflow where DeepSeek Harness plans and judges while Pi implements and performs independent read-only reviews.
-whenToUse: Use for nontrivial repository changes that benefit from planning, an isolated builder, parallel reviews, and a human merge gate.
+description: 运行多 Agent 软件工作流：DeepSeek Harness 负责规划与质量裁决，Pi 负责实现和独立只读评审。
+whenToUse: 适用于需要规划、隔离构建、并行评审和人工合并闸门的中大型仓库改动。
 ---
 
-# Pi + DeepSeek Harness Team
+# Pi + DeepSeek Harness 多 Agent 团队
 
-Use the DSH parent as coordinator. Do not edit product files from the parent when the
-Pi subagent tools are available.
+由 DSH 父 Agent 担任协调者。Pi 子 Agent 工具可用时，父 Agent 不要直接编辑产品文件。
 
-## Required tools
+## 必需工具
 
-- `subagent_pi`: one-shot Pi agent with write tools.
-- `subagent_pi_review`: one-shot Pi agent restricted to `read`, `grep`, `find`, and `ls`.
+- `subagent_pi`：拥有写工具的一次性 Pi Agent。
+- `subagent_pi_review`：只允许 `read`、`grep`、`find`、`ls` 的一次性 Pi Agent。
 
-If either tool is unavailable, stop and explain that the `@local/dsh-pi-agent-team`
-bundle is not loaded.
+任一工具不可用时，立即停止并说明 `@local/dsh-pi-agent-team` bundle 尚未加载。
 
-## Workflow
+## 工作流
 
-1. Read the task and repository instructions. Decide whether a dedicated Git worktree
-   is needed. Never work directly on a dirty default branch.
-2. Write a compact plan with observable acceptance criteria and a list of likely files.
-3. Start two `subagent_pi_review` tasks in parallel:
-   - Repository scout: relevant modules, tests, commands, invariants, and unrelated files.
-   - Solution architect: file-level design, failure modes, compatibility, and test plan.
-4. Wait for both results. Resolve contradictions before implementation.
-5. Call `subagent_pi` with a self-contained implementation brief containing:
-   - the original task and acceptance criteria;
-   - both read-only handoffs;
-   - the worktree path and base commit;
-   - commands to run;
-   - the requirement to avoid commit, merge, rebase, reset, and unrelated edits.
-6. Run the repository's verification commands from the DSH parent. Record exact output.
-7. Start three `subagent_pi_review` tasks in parallel:
-   - software correctness, edge cases, contracts, regression risk, and tests;
-   - methodology, algorithms, statistics, metrics, and reproducibility when relevant;
-   - security, command injection, path traversal, secrets, and destructive operations.
-   Give each reviewer the base commit, task, builder summary, verification output, and
-   instructions to inspect `git diff <base>`.
-8. Require every finding in this format:
-   `[P0-P3] file:line | problem | evidence | recommendation`.
-9. If any P0/P1 finding or failed verification remains, call `subagent_pi` again with
-   the complete findings and require a finding-by-finding response.
-10. Do not declare success from model opinion alone. Stop only when all configured
-    commands pass and all required reviews have a pass verdict or a written rebuttal.
-11. Present the diff, files changed, commands run, review verdicts, residual risks, and
-    a human merge decision. Do not commit, push, or merge.
+1. 阅读任务和仓库规则，判断是否需要独立 Git worktree；不得直接在脏的默认分支上工作。
+2. 写出简洁规划，包含可观察验收标准和可能涉及的文件。
+3. 并行启动两个 `subagent_pi_review` 任务：
+   - 仓库侦察：相关模块、测试、命令、约束和无关文件。
+   - 方案设计：文件级设计、失败模式、兼容性和测试计划。
+4. 等待两者完成，先解决冲突再开始实现。
+5. 调用 `subagent_pi`，提供完整、自包含的实现说明：
+   - 原始任务和验收标准；
+   - 两份只读交接；
+   - worktree 路径和基线提交；
+   - 需要运行的命令；
+   - 禁止 commit、merge、rebase、reset 和无关改动。
+6. 由 DSH 父 Agent 运行仓库验证命令，并记录准确输出。
+7. 并行启动三个 `subagent_pi_review` 任务：
+   - 软件正确性、边界、契约、回归风险和测试；
+   - 方法论、算法、统计、指标和可复现性；
+   - 安全、命令注入、路径穿越、密钥和破坏性操作。
+   向每个评审者提供基线提交、任务、构建摘要、验证输出，并要求检查 `git diff <base>`。
+8. 每条 finding 必须使用以下格式：
+   `[P0-P3] 文件:行 | 问题 | 证据 | 建议`。
+9. 如果仍有 P0/P1 finding 或验证失败，再次调用 `subagent_pi`，提供完整意见并要求逐条回应。
+10. 不得仅凭模型意见宣布成功。只有所有配置命令通过，且必要评审均为通过或有书面反驳时才停止。
+11. 展示 diff、改动文件、运行命令、评审结论、剩余风险和人工合并决定。不要 commit、push 或 merge。
 
-## Evidence rules
+## 证据规则
 
-- Never invent command output.
-- Never let the builder review its own work.
-- Keep review artifacts unchanged.
-- Prefer no change over speculative refactoring.
-- If the workflow cannot run due to Pi authentication or missing tools, report the
-  exact failed prerequisite instead of simulating a successful run.
+- 不得编造命令输出。
+- 不允许构建者评审自己的工作。
+- 不得修改评审产物。
+- 优先不修改，避免猜测性重构。
+- 如因 Pi 认证或工具缺失无法运行，报告准确缺失项，不得模拟成功。
+- 所有面向用户的计划、摘要、评审结论文本和最终报告必须使用简体中文；代码、路径、命令和标识符可以保留英文。

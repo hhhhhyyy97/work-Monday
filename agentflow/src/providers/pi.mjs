@@ -66,7 +66,7 @@ export class PiProvider {
     }
     args.push(`@${promptPath}`);
 
-    onEvent?.({ type: "agent.started", message: `${role} started with Pi` });
+    onEvent?.({ type: "agent.started", message: `${role} 已由 Pi 启动` });
     const child = spawn(process.execPath, [resolvePiCli(), ...args], {
       cwd,
       env: { ...process.env, PI_OFFLINE: process.env.PI_OFFLINE || "1" },
@@ -91,7 +91,7 @@ export class PiProvider {
         if (event.type === "tool_execution_start") {
           onEvent?.({
             type: "agent.progress",
-            message: `Pi: ${event.toolName || "tool"} started`,
+            message: `Pi：开始执行 ${event.toolName || "工具"}`,
           });
         }
         if (event.type === "message_end" && event.message?.role === "assistant") {
@@ -101,7 +101,7 @@ export class PiProvider {
         if (event.type === "auto_retry_end" && event.success === false) {
           onEvent?.({
             type: "agent.progress",
-            message: `Pi retry failed: ${event.finalError || "unknown error"}`,
+            message: `Pi 重试失败：${event.finalError || "未知错误"}`,
           });
         }
       } catch {
@@ -132,14 +132,14 @@ export class PiProvider {
       const [code] = await once(child, "close");
       clearTimeout(timer);
       if (stdoutBuffer.trim()) handleLine(stdoutBuffer);
-      if (timedOut) throw new Error(`${role} timed out after ${timeoutMs}ms.`);
+      if (timedOut) throw new Error(`${role} 在 ${timeoutMs}ms 后超时。`);
       if (code !== 0) {
         throw new Error(
-          `${role} failed with Pi exit code ${code}.${stderr ? `\n${stderr.slice(-4000)}` : ""}`,
+          `${role} 执行失败，Pi 退出码 ${code}。${stderr ? `\n${stderr.slice(-4000)}` : ""}`,
         );
       }
       if (!lastAssistantText.trim()) {
-        throw new Error(`${role} completed with Pi but returned no assistant text.`);
+        throw new Error(`${role} 已完成 Pi 执行，但没有返回助手文本。`);
       }
       return lastAssistantText;
     } finally {
