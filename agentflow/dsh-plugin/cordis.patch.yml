@@ -1,0 +1,19 @@
+- insert:
+    - id: subagent-pi-provider
+      name: '@local/dsh-pi-agent-team'
+
+    - id: tool-subagent-pi-write
+      name: '@deepseek-ai/dsh-tool-subagent'
+      config:
+        provider: pi-write
+        toolName: subagent_pi
+        enableRunInBackground: true
+        maxDepth: 1
+
+    - id: tool-subagent-pi-read
+      name: '@deepseek-ai/dsh-tool-subagent'
+      config:
+        provider: pi-read
+        toolName: subagent_pi_review
+        enableRunInBackground: true
+        maxDepth: 1

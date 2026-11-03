@@ -9,6 +9,30 @@ __pycache__/
 .venv/
 venv/
 
+# Node
+node_modules/
+.pnpm-store/
+coverage/
+*.log
+
+# AgentFlow runtime
+agentflow/runs/
+agentflow/**/runs/
+
+# Local browser and test output
+.edge-smoke-profile/
+.chrome-smoke-profile/
+.smoke-artifacts/
+
+# Local configuration and credentials
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+auth.json
+credentials.*
+
 # Editors / OS
 .idea/
 .vscode/

@@ -1,0 +1,7 @@
+{
+  "maxRounds": 2,
+  "reviewers": ["software", "methodology", "security"],
+  "verifyCommands": ["npm test", "npm run lint"],
+  "approval": "required",
+  "isolateWithWorktree": true
+}

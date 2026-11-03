@@ -1,0 +1,187 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta
+      name="description"
+      content="A dependency-free inventory tracker with low-stock alerts and JSON export."
+    >
+    <title>Inventory Tool</title>
+    <link rel="stylesheet" href="styles.css">
+  </head>
+  <body>
+    <header class="page-header">
+      <div class="page-header__inner">
+        <p class="eyebrow">Stockroom</p>
+        <h1>Inventory Tool</h1>
+        <p class="page-intro">
+          Track quantities and minimum stock levels in one local workspace.
+        </p>
+      </div>
+    </header>
+
+    <main class="app-shell">
+      <section class="form-section" aria-labelledby="form-heading">
+        <div class="section-heading">
+          <div>
+            <p class="section-kicker">Item details</p>
+            <h2 id="form-heading">Add item</h2>
+          </div>
+          <p class="section-note">Saved inventory stays in this browser.</p>
+        </div>
+
+        <form id="item-form" class="item-form" novalidate>
+          <input id="item-id" name="itemId" type="hidden">
+
+          <div class="field">
+            <label for="name">Name</label>
+            <input
+              id="name"
+              name="name"
+              type="text"
+              autocomplete="off"
+              aria-describedby="name-error"
+            >
+            <p id="name-error" class="field-error" data-error-for="name"></p>
+          </div>
+
+          <div class="field">
+            <label for="sku">SKU</label>
+            <input
+              id="sku"
+              name="sku"
+              type="text"
+              autocomplete="off"
+              spellcheck="false"
+              aria-describedby="sku-error"
+            >
+            <p id="sku-error" class="field-error" data-error-for="sku"></p>
+          </div>
+
+          <div class="field">
+            <label for="quantity">Quantity</label>
+            <input
+              id="quantity"
+              name="quantity"
+              type="number"
+              min="0"
+              step="1"
+              inputmode="numeric"
+              aria-describedby="quantity-error"
+            >
+            <p
+              id="quantity-error"
+              class="field-error"
+              data-error-for="quantity"
+            ></p>
+          </div>
+
+          <div class="field">
+            <label for="minimum-stock">Minimum stock</label>
+            <input
+              id="minimum-stock"
+              name="minimumStock"
+              type="number"
+              min="0"
+              step="1"
+              inputmode="numeric"
+              aria-describedby="minimum-stock-error"
+            >
+            <p
+              id="minimum-stock-error"
+              class="field-error"
+              data-error-for="minimumStock"
+            ></p>
+          </div>
+
+          <div class="form-actions">
+            <button id="save-button" class="button button--primary" type="submit">
+              Save item
+            </button>
+            <button
+              id="cancel-button"
+              class="button button--quiet"
+              type="button"
+              hidden
+            >
+              Cancel
+            </button>
+          </div>
+        </form>
+      </section>
+
+      <section class="inventory-section" aria-labelledby="inventory-heading">
+        <div class="section-heading section-heading--inventory">
+          <div>
+            <p class="section-kicker">Current stock</p>
+            <h2 id="inventory-heading">Inventory</h2>
+          </div>
+          <p id="low-stock-count" class="stock-count" aria-live="polite">
+            0 low-stock items
+          </p>
+        </div>
+
+        <div class="inventory-toolbar">
+          <div class="search-field">
+            <label for="search">Search</label>
+            <input
+              id="search"
+              type="search"
+              placeholder="Name or SKU"
+              autocomplete="off"
+            >
+          </div>
+
+          <div class="sort-controls">
+            <div class="compact-field">
+              <label for="sort-key">Sort by</label>
+              <select id="sort-key">
+                <option value="name">Name</option>
+                <option value="sku">SKU</option>
+                <option value="quantity">Quantity</option>
+                <option value="minimumStock">Minimum stock</option>
+              </select>
+            </div>
+
+            <div class="compact-field">
+              <label for="sort-direction">Direction</label>
+              <select id="sort-direction">
+                <option value="asc">Ascending</option>
+                <option value="desc">Descending</option>
+              </select>
+            </div>
+          </div>
+
+          <button id="export-button" class="button button--outline" type="button">
+            Export JSON
+          </button>
+        </div>
+
+        <p id="status" class="status" role="status" aria-live="polite"></p>
+        <p id="empty-state" class="empty-state">
+          No inventory items yet. Add an item to start tracking stock.
+        </p>
+
+        <div id="table-wrap" class="table-wrap" hidden>
+          <table>
+            <caption class="visually-hidden">Inventory items</caption>
+            <thead>
+              <tr>
+                <th scope="col">Name</th>
+                <th scope="col">SKU</th>
+                <th scope="col" class="numeric">Quantity</th>
+                <th scope="col" class="numeric">Minimum</th>
+                <th scope="col">Status</th>
+                <th scope="col"><span class="visually-hidden">Actions</span></th>
+              </tr>
+            </thead>
+            <tbody id="inventory-body"></tbody>
+          </table>
+        </div>
+      </section>
+    </main>
+
+    <script type="module" src="app.js"></script>
+  </body>
+</html>

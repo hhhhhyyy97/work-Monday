@@ -1,0 +1,17 @@
+{
+  "name": "@local/agentflow",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Local multi-agent orchestration for a Lancer Light UI dashboard.",
+  "scripts": {
+    "test": "node --test",
+    "list": "node src/cli.mjs list"
+  },
+  "engines": {
+    "node": ">=22.19"
+  },
+  "dependencies": {
+    "@earendil-works/pi-coding-agent": "1.5.0"
+  }
+}

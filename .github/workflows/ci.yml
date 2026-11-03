@@ -6,7 +6,7 @@ on:
   pull_request:
 
 jobs:
-  test:
+  python-tests:
     runs-on: ubuntu-latest
     strategy:
       matrix:
@@ -16,5 +16,27 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
-      - name: Run unit tests
+      - name: Run Python tests
         run: python -m unittest discover -s tests -v
+
+  node-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: "11.25.0"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: pnpm
+          cache-dependency-path: agentflow/pnpm-lock.yaml
+      - name: Install AgentFlow dependencies
+        working-directory: agentflow
+        run: pnpm install --frozen-lockfile --ignore-scripts
+      - name: Test AgentFlow and DSH providers
+        working-directory: agentflow
+        run: node --test
+      - name: Test inventory example
+        working-directory: examples/inventory-tool
+        run: node --test

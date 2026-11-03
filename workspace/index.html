@@ -1,0 +1,121 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>多 Agent 桌面工作区</title>
+    <link rel="stylesheet" href="./style.css" />
+    <link rel="stylesheet" href="./running-border.css" />
+  </head>
+  <body>
+    <header>
+      <a class="brand" href="./index.html">Lancer <span>× 多 Agent 工作流</span></a>
+      <nav aria-label="执行方"></nav>
+      <div class="mode-toggle" role="group" aria-label="数据来源">
+        <button data-mode="demo" aria-pressed="true">演示</button
+        ><button data-mode="flow" aria-pressed="false">AgentFlow</button
+        ><button data-mode="live" aria-pressed="false">GitHub 实时</button>
+      </div>
+      <a class="source" href="./README.md">说明 ↗</a>
+    </header>
+
+    <div class="workspace">
+      <aside>
+        <p class="eyebrow">多 Agent 桌面工作区</p>
+        <h1 id="aside-title">一次任务，<br />从头到尾可追溯。</h1>
+        <p class="intro">会话、并行分支、运行过程与交付文件放在一起，光线把每个执行方连到它产出的节点。</p>
+        <div class="legend-cards">
+          <div class="lc"><span class="agent-dot" style="--light-color:#2789c3"></span>WorkBuddy · Builder</div>
+          <div class="lc"><span class="agent-dot" style="--light-color:#0f766e"></span>Codex · 统筹 + 评审</div>
+          <div class="lc"><span class="agent-dot" style="--light-color:#b45309"></span>GitHub Actions · 编排器</div>
+          <div class="lc"><span class="agent-dot" style="--light-color:#64748b"></span>Human · 拍板 / 合并</div>
+        </div>
+        <div class="token-box">
+          <label for="gh-token">GitHub 只读 Token</label>
+          <input id="gh-token" type="password" placeholder="github_pat_..." autocomplete="off" />
+          <button id="save-token">保存</button>
+          <p>私有仓库或匿名限流时使用；只读权限即可。</p>
+        </div>
+        <form id="flow-launch" class="flow-launch" hidden>
+          <label for="flow-task">任务</label>
+          <textarea id="flow-task" rows="4" placeholder="例如：给报价模块补上输入校验，并补充测试" required></textarea>
+          <label for="flow-workspace">目标仓库</label>
+          <input id="flow-workspace" placeholder="C:\path\to\git-repo" required />
+          <p class="field-hint">需要是已有 Git 仓库；新项目请先创建目录并执行 git init。</p>
+          <div class="flow-row">
+            <label for="flow-provider">执行器</label>
+            <select id="flow-provider">
+              <option value="codex">Codex CLI</option>
+              <option value="pi">Pi Agent</option>
+              <option value="mock">Mock（只测流程）</option>
+            </select>
+          </div>
+          <label for="flow-commands">验证命令（每行一条）</label>
+          <textarea id="flow-commands" rows="3" placeholder="npm test&#10;npm run lint"></textarea>
+          <label class="check-line">
+            <input id="flow-approval" type="checkbox" checked />
+            全绿后等待人工批准
+          </label>
+          <button id="flow-start" class="primary" type="submit">启动 Agent 团队</button>
+          <p id="flow-launch-status" role="status"></p>
+        </form>
+        <div id="flow-history-box" class="flow-history" hidden>
+          <label for="flow-history">历史运行</label>
+          <select id="flow-history"></select>
+        </div>
+        <div class="aside-bottom">
+          <span class="small-dot"></span> 基于 Lancer Light UI（MIT）
+          <p>流程模型来自 Agentic Dev Framework；运行在隔离 worktree。</p>
+        </div>
+      </aside>
+
+      <main>
+        <div class="section-top">
+          <div>
+            <span class="eyebrow">当前任务</span>
+            <h2 id="task-title">moving_average 数值模块（走通闭环）</h2>
+          </div>
+          <span id="status" role="status" aria-live="polite">准备就绪</span>
+        </div>
+        <div id="messages" role="log" aria-label="任务执行会话">
+          <div class="welcome">
+            <span>↗</span>
+            <h3>点「开始运行」</h3>
+            <p>观察 WorkBuddy、Codex、GitHub Actions 的光线<br />怎样落到工作树节点，并汇入交付。</p>
+          </div>
+        </div>
+        <footer>
+          <div class="toolbar">
+            <button id="run" class="primary">开始运行 →</button>
+            <button id="pause" disabled>暂停动效</button>
+            <button id="reset">重置</button>
+            <button id="approve" hidden>批准并交付</button>
+          </div>
+          <p id="footer-help">软件评审与方法论评审并行分叉，修复时汇合；交付节点可点回对应气泡。</p>
+        </footer>
+      </main>
+
+      <section class="tree-panel" aria-label="任务工作树">
+        <div class="section-top">
+          <div>
+            <span class="eyebrow">GitTree</span>
+            <h2>任务工作树</h2>
+          </div>
+          <span id="counts">0 个节点</span>
+        </div>
+        <div class="tree-tools">
+          <span id="graph-status">等待开始</span>
+        </div>
+        <div id="tree-scroll" tabindex="0" aria-label="可滚动的工作树">
+          <div id="tree"><svg id="edges" aria-hidden="true"></svg></div>
+        </div>
+        <div class="legend">
+          <span>○ 进行</span><span>● 完成</span><span>◇ 交付</span><span>⑂ 分支 → 合并</span>
+        </div>
+      </section>
+    </div>
+
+    <script src="./light-ui.js"></script>
+    <script src="./app.js"></script>
+  </body>
+</html>
