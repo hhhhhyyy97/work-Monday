@@ -62,6 +62,10 @@
             <input id="flow-approval" type="checkbox" checked />
             全绿后等待人工批准
           </label>
+          <label class="check-line">
+            <input id="flow-auto-continue" type="checkbox" checked />
+            未通过时自动追加最多 3 轮修复
+          </label>
           <button id="flow-start" class="primary" type="submit">启动 Agent 团队</button>
           <p id="flow-launch-status" role="status"></p>
         </form>

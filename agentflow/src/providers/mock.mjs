@@ -51,7 +51,40 @@ export class MockProvider {
     });
     await new Promise((resolve) => setTimeout(resolve, 80));
     if (role === "planner") return JSON.stringify(plan, null, 2);
-    if (role.endsWith("reviewer")) return JSON.stringify(review, null, 2);
+    if (role.endsWith("reviewer")) {
+      const changeRounds = Number(
+        String(prompt || "").match(/\[MOCK_CHANGES_ROUNDS=(\d+)\]/)?.[1] || 0,
+      );
+      const round = Number(String(prompt || "").match(/评审轮次：第 (\d+) 轮/)?.[1] || 0);
+      if (round > 0 && round <= changeRounds) {
+        return JSON.stringify(
+          {
+            verdict: "changes",
+            summary: `模拟第 ${round} 轮评审仍要求修改。`,
+            findings: [
+              {
+                severity: "P1",
+                file: "README.md",
+                line: 1,
+                title: "模拟验收标准尚未满足",
+                evidence: "Mock Provider 按配置返回未通过评审。",
+                recommendation: "继续进入下一轮修复并重新验证。",
+              },
+            ],
+            checks: [
+              {
+                name: "模拟评审",
+                status: "fail",
+                evidence: "本轮用于验证自动追加修复。",
+              },
+            ],
+          },
+          null,
+          2,
+        );
+      }
+      return JSON.stringify(review, null, 2);
+    }
     return [
       `# 模拟 ${roleText}`,
       "",

@@ -26,7 +26,8 @@ function usage() {
   --model <名称>             Codex 模型覆盖
   --verify <命令>            验证命令，可重复
   --reviewers <列表>         software,methodology,security
-  --max-rounds <数字>        评审与修复轮次上限，1-5（默认：2）
+  --max-rounds <数字>        基础评审与修复轮次，1-5（默认：3）
+  --auto-continue-rounds <数> 未通过时自动追加的修复轮次，0-5（默认：3）
   --approval <auto|required> 人工闸门（默认：auto）
   --in-place                 直接在源工作区运行，不创建 worktree
   --run-id <ID>              指定运行 ID
@@ -182,6 +183,8 @@ async function main() {
     workspace: path.resolve(args.workspace || process.cwd()),
     provider: args.provider || "codex",
     maxRounds: args.maxRounds ? Number(args.maxRounds) : undefined,
+    autoContinueRounds:
+      args.autoContinueRounds !== undefined ? Number(args.autoContinueRounds) : undefined,
     reviewers,
     verifyCommands: args.verifyCommands.length ? args.verifyCommands : undefined,
     approval: args.approval,

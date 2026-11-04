@@ -21,7 +21,8 @@ const promptRoot = path.join(agentflowRoot, "prompts");
 const schemaRoot = path.join(agentflowRoot, "schemas");
 
 const DEFAULT_CONFIG = {
-  maxRounds: 2,
+  maxRounds: 3,
+  autoContinueRounds: 3,
   reviewers: ["software", "methodology", "security"],
   verifyCommands: [],
   approval: "auto",
@@ -67,6 +68,10 @@ export async function loadWorkflowConfig(workspace, overrides = {}) {
     ),
   };
   config.maxRounds = Math.max(1, Math.min(5, Number(config.maxRounds) || 2));
+  config.autoContinueRounds = Math.max(
+    0,
+    Math.min(5, Number(config.autoContinueRounds) || 0),
+  );
   config.reviewers = [...new Set(config.reviewers)].filter((name) => REVIEW_META[name]);
   if (!config.reviewers.length) config.reviewers = [...DEFAULT_CONFIG.reviewers];
   config.verifyCommands = Array.isArray(config.verifyCommands) ? config.verifyCommands : [];
@@ -287,6 +292,7 @@ export async function runWorkflow(options) {
   const workspace = path.resolve(options.workspace || process.cwd());
   const config = await loadWorkflowConfig(workspace, {
     maxRounds: options.maxRounds,
+    autoContinueRounds: options.autoContinueRounds,
     reviewers: options.reviewers,
     verifyCommands: options.verifyCommands,
     approval: options.approval,
@@ -310,6 +316,8 @@ export async function runWorkflow(options) {
     lastSeq: 0,
     rounds: 0,
     maxRounds: config.maxRounds,
+    autoContinueRounds: config.autoContinueRounds,
+    automaticExtensionsUsed: 0,
     reviewers: config.reviewers,
     approval: config.approval,
     steps: [],
@@ -368,6 +376,7 @@ export async function runWorkflow(options) {
       `分支：${state.branch || "（原地运行）"}`,
       `基线提交：${state.baseSha || "（尚未读取）"}`,
       `轮次：${state.rounds}`,
+      `自动追加修复：${state.automaticExtensionsUsed || 0} 轮`,
       ...(reason ? ["", "## 当前说明", reason] : []),
       "",
       "## 评审结论",
@@ -889,14 +898,31 @@ ${reviewerPrompt(
         continue;
       }
 
+      if (state.automaticExtensionsUsed < config.autoContinueRounds) {
+        config.maxRounds += 1;
+        state.maxRounds = config.maxRounds;
+        state.automaticExtensionsUsed += 1;
+        await update({
+          maxRounds: config.maxRounds,
+          automaticExtensionsUsed: state.automaticExtensionsUsed,
+        });
+        await emit({
+          type: "run.auto_continue",
+          role: "orchestrator",
+          message: `评审仍有未关闭意见，自动追加第 ${config.maxRounds} 轮修复与评审（${state.automaticExtensionsUsed}/${config.autoContinueRounds}）。`,
+        });
+        reviewRound += 1;
+        continue;
+      }
+
       const reportArtifact = await writeReport(
         "changes",
-        `已达到评审轮次上限（${config.maxRounds} 轮），但仍有评审意见或验证失败，等待人工决定下一步。`,
+        `已完成 ${config.maxRounds} 轮（含 ${state.automaticExtensionsUsed} 轮自动修复），但仍有评审意见或验证失败，等待人工决定下一步。`,
       );
       const decision = await askHuman({
         kind: "review_limit",
         title: "评审已达到上限",
-        message: `已完成 ${config.maxRounds} 轮评审，但仍有未通过的检查。请选择下一步。`,
+        message: `已完成 ${config.maxRounds} 轮评审，其中自动追加 ${state.automaticExtensionsUsed} 轮，但仍有未通过的检查。请选择下一步。`,
         details: previousReviewText,
         reportArtifact,
         resumePhase: "reviewing",

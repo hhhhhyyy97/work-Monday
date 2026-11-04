@@ -406,6 +406,8 @@ async function startAgentFlow(body) {
     body.approval === "auto" ? "auto" : "required",
     "--max-rounds",
     String(Math.max(1, Math.min(5, Number(body.maxRounds) || 2))),
+    "--auto-continue-rounds",
+    String(Math.max(0, Math.min(5, Number(body.autoContinueRounds) || 0))),
   ];
   const commands = Array.isArray(body.verifyCommands)
     ? body.verifyCommands

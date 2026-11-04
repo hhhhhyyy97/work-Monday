@@ -107,6 +107,7 @@ test("waits for human approval before completing", async () => {
       workspace: source,
       provider: "mock",
       maxRounds: 1,
+      autoContinueRounds: 0,
       reviewers: ["software"],
       verifyCommands: [],
       approval: "required",
@@ -143,6 +144,7 @@ test("review limit requests a human decision and supports accepting the result",
       workspace: source,
       provider: "mock",
       maxRounds: 1,
+      autoContinueRounds: 0,
       reviewers: ["software"],
       verifyCommands: ['node -e "process.exit(1)"'],
       approval: "auto",
@@ -179,6 +181,44 @@ test("review limit requests a human decision and supports accepting the result",
     );
     assert.match(finalReport, /人工接受/);
     assert.match(finalReport, /接受当前结果/);
+  } finally {
+    if (previousRoot === undefined) delete process.env.AGENTFLOW_RUNS_ROOT;
+    else process.env.AGENTFLOW_RUNS_ROOT = previousRoot;
+  }
+});
+
+test("automatically continues fixing after the nominal review limit", async () => {
+  const source = await createRepository();
+  const runsRoot = await mkdtemp(path.join(tmpdir(), "agentflow-runs-"));
+  const previousRoot = process.env.AGENTFLOW_RUNS_ROOT;
+  process.env.AGENTFLOW_RUNS_ROOT = runsRoot;
+  try {
+    const state = await runWorkflow({
+      task: "[MOCK_CHANGES_ROUNDS=1] 验证自动追加修复。",
+      workspace: source,
+      provider: "mock",
+      maxRounds: 1,
+      autoContinueRounds: 2,
+      reviewers: ["software"],
+      verifyCommands: [],
+      approval: "auto",
+      isolateWithWorktree: true,
+      runId: "auto-continue-test",
+    });
+    assert.equal(state.status, "completed");
+    assert.equal(state.finalVerdict, "pass");
+    assert.equal(state.rounds, 2);
+    assert.equal(state.maxRounds, 2);
+    assert.equal(state.automaticExtensionsUsed, 1);
+    assert.ok(state.steps.some((step) => step.id === "build-2"));
+    const store = new RunStore(runsRoot);
+    const events = await store.events("auto-continue-test");
+    assert.ok(events.some((event) => event.type === "run.auto_continue"));
+    const report = await readFile(
+      path.join(store.runDir("auto-continue-test"), "artifacts", "final-report.md"),
+      "utf8",
+    );
+    assert.match(report, /自动追加修复：1 轮/);
   } finally {
     if (previousRoot === undefined) delete process.env.AGENTFLOW_RUNS_ROOT;
     else process.env.AGENTFLOW_RUNS_ROOT = previousRoot;

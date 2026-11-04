@@ -922,7 +922,7 @@ function clearFlowView(run) {
 }
 
 async function animateFlowEvent(event, run) {
-  if (!["step.started", "step.finished", "step.failed", "step.blocked", "step.retry", "step.changes", "workspace.ready", "run.waiting_approval", "run.waiting_human", "run.human_decided", "run.finished", "run.failed"].includes(event.type)) {
+  if (!["step.started", "step.finished", "step.failed", "step.blocked", "step.retry", "step.changes", "workspace.ready", "run.auto_continue", "run.waiting_approval", "run.waiting_human", "run.human_decided", "run.finished", "run.failed"].includes(event.type)) {
     return;
   }
   const agent = flowAgent(event);
@@ -1092,7 +1092,8 @@ async function startFlow(event) {
         .filter(Boolean),
       approval: $("#flow-approval").checked ? "required" : "auto",
       reviewers: ["software", "methodology", "security"],
-      maxRounds: 2,
+      maxRounds: 3,
+      autoContinueRounds: $("#flow-auto-continue").checked ? 3 : 0,
     };
     const result = await flowApi("/api/agentflow/runs", {
       method: "POST",
