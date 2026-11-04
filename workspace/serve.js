@@ -2,6 +2,7 @@ const http = require("http");
 const fs = require("fs");
 const fsp = require("fs/promises");
 const path = require("path");
+const os = require("os");
 const { execFile, spawn } = require("child_process");
 const { randomUUID } = require("crypto");
 
@@ -20,6 +21,172 @@ const types = {
   ".json": "application/json; charset=utf-8",
   ".svg": "image/svg+xml",
 };
+function runFile(file, args, options = {}) {
+  return new Promise((resolve, reject) => {
+    execFile(
+      file,
+      args,
+      {
+        windowsHide: true,
+        maxBuffer: 1024 * 1024,
+        ...options,
+      },
+      (error, stdout, stderr) => {
+        if (error) {
+          error.stderr = stderr;
+          reject(error);
+          return;
+        }
+        resolve({ stdout: String(stdout || ""), stderr: String(stderr || "") });
+      },
+    );
+  });
+}
+
+async function validateWorkspace(inputPath) {
+  const rawPath = String(inputPath || "").trim();
+  if (!rawPath) throw new Error("请选择目标仓库。");
+  const requestedPath = path.resolve(rawPath);
+  const workspaceStat = await fsp.stat(requestedPath).catch(() => null);
+  if (!workspaceStat?.isDirectory()) {
+    throw new Error(`目标目录不存在：${requestedPath}`);
+  }
+
+  let root;
+  try {
+    ({ stdout: root } = await runFile("git", ["rev-parse", "--show-toplevel"], {
+      cwd: requestedPath,
+    }));
+  } catch {
+    throw new Error(`目标目录不是 Git 仓库：${requestedPath}`);
+  }
+  root = path.resolve(root.trim());
+
+  try {
+    await runFile("git", ["rev-parse", "--verify", "HEAD"], { cwd: root });
+  } catch {
+    throw new Error(`Git 仓库还没有任何提交：${root}`);
+  }
+
+  const [{ stdout: branch }, statusResult] = await Promise.all([
+    runFile("git", ["branch", "--show-current"], { cwd: root }),
+    runFile("git", ["status", "--porcelain"], { cwd: root }).catch(() => ({ stdout: "" })),
+  ]);
+  const dirtyCount = statusResult.stdout.trim()
+    ? statusResult.stdout.trim().split(/\r?\n/).length
+    : 0;
+  return {
+    valid: true,
+    path: root,
+    name: path.basename(root),
+    branch: branch.trim() || "detached",
+    dirtyCount,
+  };
+}
+
+async function recentWorkspaces() {
+  const runs = await listRuns(100);
+  const seen = new Set();
+  const workspaces = [];
+  for (const run of runs) {
+    if (!run.sourceWorkspace || seen.has(run.sourceWorkspace)) continue;
+    seen.add(run.sourceWorkspace);
+    try {
+      workspaces.push({
+        ...(await validateWorkspace(run.sourceWorkspace)),
+        lastUsedAt: run.updatedAt,
+      });
+    } catch {}
+  }
+  return workspaces.slice(0, 12);
+}
+
+function isRepositoryDirectory(directory) {
+  try {
+    return fs.existsSync(path.join(directory, ".git"));
+  } catch {
+    return false;
+  }
+}
+
+async function listFilesystemDirectory(inputPath = "") {
+  const rawPath = String(inputPath || "").trim();
+  if (!rawPath) {
+    const home = os.homedir();
+    const candidates = [
+      { name: "用户目录", path: home },
+      { name: "桌面", path: path.join(home, "Desktop") },
+      { name: "文档", path: path.join(home, "Documents") },
+      { name: "当前项目", path: path.resolve(root, "..") },
+    ];
+    for (const drive of ["C", "D", "E", "F"]) {
+      candidates.push({ name: `${drive} 盘`, path: `${drive}:\\` });
+    }
+    const seen = new Set();
+    const entries = [];
+    for (const candidate of candidates) {
+      if (!candidate.path || seen.has(candidate.path) || !fs.existsSync(candidate.path)) continue;
+      seen.add(candidate.path);
+      entries.push({
+        name: candidate.name,
+        path: candidate.path,
+        isRepository: isRepositoryDirectory(candidate.path),
+      });
+    }
+    return {
+      path: "",
+      parent: null,
+      entries,
+      workspace: null,
+      rootsMode: true,
+    };
+  }
+
+  const directory = path.resolve(rawPath);
+  const directoryStat = await fsp.stat(directory).catch(() => null);
+  if (!directoryStat?.isDirectory()) {
+    throw new Error(`目录不存在或无法访问：${directory}`);
+  }
+
+  let directoryEntries;
+  try {
+    directoryEntries = await fsp.readdir(directory, { withFileTypes: true });
+  } catch {
+    throw new Error(`没有权限读取目录：${directory}`);
+  }
+
+  const entries = directoryEntries
+    .filter((entry) => entry.isDirectory() && !entry.name.startsWith("."))
+    .slice(0, 500)
+    .map((entry) => {
+      const childPath = path.join(directory, entry.name);
+      return {
+        name: entry.name,
+        path: childPath,
+        isRepository: isRepositoryDirectory(childPath),
+      };
+    })
+    .sort((left, right) => {
+      if (left.isRepository !== right.isRepository) return left.isRepository ? -1 : 1;
+      return left.name.localeCompare(right.name, "zh-CN");
+    });
+
+  let workspace = null;
+  if (isRepositoryDirectory(directory)) {
+    try {
+      workspace = await validateWorkspace(directory);
+    } catch {}
+  }
+  const parent = path.dirname(directory);
+  return {
+    path: directory,
+    parent: parent === directory ? null : parent,
+    entries,
+    workspace,
+    rootsMode: false,
+    truncated: directoryEntries.length > entries.length,
+  };
+}
 
 function sendJson(res, status, value) {
   res.writeHead(status, {
@@ -100,30 +267,10 @@ async function listRuns(limit = 30) {
 
 async function startAgentFlow(body) {
   const task = String(body.task || "").trim();
-  if (!task) throw new Error("Task is required.");
+  if (!task) throw new Error("请填写任务内容。");
   const workspaceInput = String(body.workspace || "").trim();
-  if (!workspaceInput) throw new Error("Workspace is required.");
-  const workspace = path.resolve(workspaceInput);
-  const workspaceStat = await fsp.stat(workspace).catch(() => null);
-  if (!workspaceStat?.isDirectory()) throw new Error("Workspace directory does not exist.");
-  await new Promise((resolve, reject) => {
-    execFile(
-      "git",
-      ["rev-parse", "--show-toplevel"],
-      { cwd: workspace, windowsHide: true },
-      (error) => {
-        if (error) {
-          reject(
-            new Error(
-              `目标目录不是 Git 仓库：${workspace}。请选择已有仓库，或新建项目目录并执行 git init。`,
-            ),
-          );
-        } else {
-          resolve();
-        }
-      },
-    );
-  });
+  if (!workspaceInput) throw new Error("请选择目标仓库。");
+  const workspace = (await validateWorkspace(workspaceInput)).path;
 
   const runId = `${new Date().toISOString().replace(/[-:.TZ]/g, "").slice(0, 14)}-${randomUUID().slice(0, 8)}`;
   const runDir = path.join(runsRoot, runId);
@@ -192,6 +339,34 @@ http
         sendJson(res, 200, { runs: await listRuns(Number(queryParams.get("limit")) || 30) });
       } catch (error) {
         sendJson(res, 500, { error: error.message });
+      }
+      return;
+    }
+
+    if (urlPath === "/api/agentflow/workspaces" && req.method === "GET") {
+      try {
+        sendJson(res, 200, { workspaces: await recentWorkspaces() });
+      } catch (error) {
+        sendJson(res, 500, { error: error.message });
+      }
+      return;
+    }
+
+    if (urlPath === "/api/agentflow/workspaces/validate" && req.method === "POST") {
+      try {
+        const body = await readBody(req);
+        sendJson(res, 200, await validateWorkspace(body.path));
+      } catch (error) {
+        sendJson(res, 400, { error: error.message });
+      }
+      return;
+    }
+
+    if (urlPath === "/api/agentflow/fs" && req.method === "GET") {
+      try {
+        sendJson(res, 200, await listFilesystemDirectory(queryParams.get("path") || ""));
+      } catch (error) {
+        sendJson(res, 400, { error: error.message });
       }
       return;
     }

@@ -409,6 +409,10 @@ let flowPollTimer = null;
 let flowRenderedSteps = new Set();
 let flowRequestInFlight = false;
 let flowLastStatus = null;
+let workspaceValidationTimer = null;
+let currentArtifact = null;
+let directoryState = null;
+let directoryRequestId = 0;
 
 const flowStatusText = {
   running: "团队执行中",
@@ -537,6 +541,243 @@ async function flowApi(url, options = {}) {
   return body;
 }
 
+function setWorkspaceStatus(message, state = "") {
+  const element = $("#flow-workspace-status");
+  element.textContent = message;
+  element.dataset.state = state;
+}
+
+function applyWorkspaceValidation(workspace) {
+  $("#flow-workspace").value = workspace.path;
+  const dirty = workspace.dirtyCount
+    ? ` · ${workspace.dirtyCount} 个未提交改动`
+    : " · 工作区干净";
+  setWorkspaceStatus(`${workspace.name} · 分支 ${workspace.branch}${dirty}`, "valid");
+}
+
+async function validateWorkspaceInput(value, options = {}) {
+  const workspacePath = String(value ?? $("#flow-workspace").value).trim();
+  if (!workspacePath) {
+    setWorkspaceStatus("请选择包含 .git 的仓库目录");
+    return null;
+  }
+  setWorkspaceStatus("正在检查 Git 仓库…", "loading");
+  try {
+    const workspace = await flowApi("/api/agentflow/workspaces/validate", {
+      method: "POST",
+      body: JSON.stringify({ path: workspacePath }),
+    });
+    applyWorkspaceValidation(workspace);
+    localStorage.setItem("agentflow_workspace", workspace.path);
+    return workspace;
+  } catch (error) {
+    setWorkspaceStatus(error.message, "error");
+    if (!options.quiet) $("#flow-launch-status").textContent = "";
+    return null;
+  }
+}
+
+async function loadRecentWorkspaces() {
+  const select = $("#flow-recent-workspaces");
+  const previous = select.value;
+  try {
+    const { workspaces } = await flowApi("/api/agentflow/workspaces");
+    select.replaceChildren();
+    const placeholder = document.createElement("option");
+    placeholder.value = "";
+    placeholder.textContent = workspaces.length ? "最近仓库" : "暂无可用仓库";
+    select.append(placeholder);
+    workspaces.forEach((workspace) => {
+      const option = document.createElement("option");
+      option.value = workspace.path;
+      option.textContent = `${workspace.name} · ${workspace.branch}`;
+      option.title = workspace.path;
+      select.append(option);
+    });
+    if (previous && workspaces.some((workspace) => workspace.path === previous)) {
+      select.value = previous;
+    }
+  } catch (error) {
+    setWorkspaceStatus(error.message, "error");
+  }
+}
+
+function setDirectoryStatus(text, state = "") {
+  const status = $("#directory-status");
+  status.textContent = text;
+  status.dataset.state = state;
+}
+
+function renderDirectory(data) {
+  directoryState = data;
+  $("#directory-path").value = data.path || "";
+  $("#directory-up").disabled = !data.parent;
+  $("#directory-current").textContent = data.path
+    ? `当前目录：${data.path}`
+    : "请选择快捷位置或输入目录路径";
+
+  const selectButton = $("#directory-select-current");
+  selectButton.disabled = !data.workspace;
+  selectButton.textContent = data.workspace
+    ? `选择 ${data.workspace.name}`
+    : "选择当前仓库";
+
+  const list = $("#directory-list");
+  list.replaceChildren();
+  if (!data.entries.length) {
+    const empty = document.createElement("p");
+    empty.className = "directory-empty";
+    empty.textContent = "此目录下没有可继续浏览的子目录。";
+    list.append(empty);
+  } else {
+    for (const entry of data.entries) {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "directory-entry";
+      button.title = entry.path;
+
+      const name = document.createElement("span");
+      name.className = "directory-entry-name";
+      name.textContent = entry.name;
+      button.append(name);
+
+      if (entry.isRepository) {
+        const badge = document.createElement("span");
+        badge.className = "directory-entry-badge";
+        badge.textContent = "Git 仓库";
+        button.append(badge);
+      }
+      button.addEventListener("click", () => loadDirectory(entry.path));
+      list.append(button);
+    }
+  }
+
+  if (data.workspace) {
+    const dirty = data.workspace.dirtyCount
+      ? `，${data.workspace.dirtyCount} 个未提交改动`
+      : "，工作区干净";
+    setDirectoryStatus(
+      `已找到 Git 仓库：${data.workspace.name} · 分支 ${data.workspace.branch}${dirty}`,
+      "valid",
+    );
+  } else if (data.rootsMode) {
+    setDirectoryStatus("从常用位置开始，进入包含 .git 的目录后即可选择。");
+  } else if (data.truncated) {
+    setDirectoryStatus("当前目录子项较多，仅显示前 500 个文件夹。");
+  } else {
+    setDirectoryStatus("当前目录不是 Git 仓库，可继续进入子目录。");
+  }
+}
+
+async function loadDirectory(targetPath = "", options = {}) {
+  const requestId = ++directoryRequestId;
+  const list = $("#directory-list");
+  const choose = $("#directory-select-current");
+  choose.disabled = true;
+  list.setAttribute("aria-busy", "true");
+  if (!options.keepStatus) setDirectoryStatus("正在读取目录…", "loading");
+  try {
+    const data = await flowApi(`/api/agentflow/fs?path=${encodeURIComponent(targetPath)}`);
+    if (requestId !== directoryRequestId) return;
+    renderDirectory(data);
+  } catch (error) {
+    if (requestId !== directoryRequestId) return;
+    if (targetPath && !options.fallbackToRoot) {
+      setDirectoryStatus(`${error.message}，已返回快捷位置。`, "error");
+      await loadDirectory("", { fallbackToRoot: true, keepStatus: true });
+      return;
+    }
+    list.replaceChildren();
+    const empty = document.createElement("p");
+    empty.className = "directory-empty";
+    empty.textContent = "无法读取目录，请尝试其他路径。";
+    list.append(empty);
+    setDirectoryStatus(error.message, "error");
+  } finally {
+    if (requestId === directoryRequestId) list.removeAttribute("aria-busy");
+  }
+}
+
+async function openDirectoryBrowser() {
+  const dialog = $("#directory-modal");
+  if (!dialog.open) dialog.showModal();
+  const currentPath = $("#flow-workspace").value.trim();
+  await loadDirectory(currentPath);
+  $("#directory-path").focus();
+  $("#directory-path").select();
+}
+
+function closeDirectoryBrowser() {
+  directoryRequestId++;
+  $("#directory-modal").close();
+}
+
+async function selectCurrentDirectory() {
+  const workspace = directoryState?.workspace;
+  if (!workspace) return;
+  applyWorkspaceValidation(workspace);
+  localStorage.setItem("agentflow_workspace", workspace.path);
+  $("#flow-launch-status").textContent = "";
+  closeDirectoryBrowser();
+  await loadRecentWorkspaces();
+  $("#flow-recent-workspaces").value = workspace.path;
+}
+
+function artifactUrl(name) {
+  return `/api/agentflow/runs/${flowRunId}/artifacts/${encodeURIComponent(name)}`;
+}
+
+function createArtifactButton(name, className = "artifact-button") {
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = className;
+  button.textContent = `查看 ${name}`;
+  button.addEventListener("click", () => openArtifact(name));
+  return button;
+}
+
+async function openArtifact(name) {
+  const dialog = $("#artifact-modal");
+  const content = $("#artifact-content");
+  const error = $("#artifact-error");
+  const url = artifactUrl(name);
+  currentArtifact = { name, url };
+  $("#artifact-title").textContent = name;
+  content.textContent = "正在读取产出物…";
+  error.hidden = true;
+  if (!dialog.open) dialog.showModal();
+  try {
+    const response = await fetch(url, { cache: "no-store" });
+    if (!response.ok) throw new Error(`读取失败（HTTP ${response.status}）`);
+    content.textContent = await response.text();
+    content.scrollTop = 0;
+  } catch (cause) {
+    content.textContent = "无法显示该产出物。";
+    error.textContent = cause.message;
+    error.hidden = false;
+  }
+}
+
+function appendArtifactSection(run) {
+  if (!(run.artifacts || []).length) return;
+  const section = document.createElement("section");
+  section.className = "artifact-section";
+  const title = document.createElement("h3");
+  title.textContent = `产出物 · ${run.artifacts.length} 个`;
+  const list = document.createElement("div");
+  list.className = "artifact-list";
+  const ordered = [...run.artifacts].sort((left, right) => {
+    const rank = (value) => value.endsWith("final-report.md") ? 0 : value.endsWith(".patch") ? 1 : 2;
+    return rank(left) - rank(right) || left.localeCompare(right, "zh-CN");
+  });
+  ordered.forEach((artifact) => {
+    const name = artifact.split(/[\\/]/).pop();
+    list.append(createArtifactButton(name));
+  });
+  section.append(title, list);
+  $("#messages").append(section);
+}
+
 async function loadFlowRuns() {
   try {
     const { runs } = await flowApi("/api/agentflow/runs");
@@ -594,19 +835,7 @@ function clearFlowView(run) {
       $("#messages").append(recap);
     }
     if (["completed", "changes_required", "failed"].includes(run.status)) {
-      const files = ["final-report.md", `round-${run.rounds}.patch`];
-      for (const name of files) {
-        if (!(run.artifacts || []).some((artifact) => artifact.split(/[\\/]/).pop() === name)) {
-          continue;
-        }
-        const link = document.createElement("a");
-        link.className = "delivery";
-        link.textContent = `↓ ${name}`;
-        link.href = `/api/agentflow/runs/${run.id}/artifacts/${name}`;
-        link.target = "_blank";
-        link.rel = "noopener";
-        $("#messages").append(link);
-      }
+      appendArtifactSection(run);
     }
     for (const step of run.steps || []) flowNodeFromStep(step);
   }
@@ -629,13 +858,7 @@ async function animateFlowEvent(event, run) {
     for (const artifact of run.artifacts || []) {
       const name = artifact.split(/[\\/]/).pop();
       if (name !== "final-report.md" && !artifact.endsWith(".patch")) continue;
-      const link = document.createElement("a");
-      link.className = "delivery";
-      link.textContent = `↓ ${name}`;
-      link.href = `/api/agentflow/runs/${flowRunId}/artifacts/${name}`;
-      link.target = "_blank";
-      link.rel = "noopener";
-      bubble.append(link);
+      bubble.append(createArtifactButton(name, "delivery artifact-button"));
     }
   }
 
@@ -733,6 +956,7 @@ async function selectFlowRun(runId) {
     if (run.sourceWorkspace) {
       $("#flow-workspace").value = run.sourceWorkspace;
       localStorage.setItem("agentflow_workspace", run.sourceWorkspace);
+      validateWorkspaceInput(run.sourceWorkspace, { quiet: true });
     }
     $("#status").textContent = flowStatusText[run.status] || run.status;
     $("#graph-status").textContent = flowPhaseText(run.phase);
@@ -749,13 +973,28 @@ async function startFlow(event) {
   event.preventDefault();
   const task = $("#flow-task").value.trim();
   const workspace = $("#flow-workspace").value.trim();
-  if (!task || !workspace) return;
+  if (!task) {
+    $("#flow-launch-status").textContent = "请填写任务内容。";
+    $("#flow-task").focus();
+    return;
+  }
+  if (!workspace) {
+    $("#flow-launch-status").textContent = "请选择目标仓库。";
+    $("#flow-choose-workspace").focus();
+    return;
+  }
   $("#flow-start").disabled = true;
-  $("#flow-launch-status").textContent = "正在启动隔离 worktree…";
+  $("#flow-launch-status").textContent = "正在检查目标仓库…";
   try {
+    const validatedWorkspace = await validateWorkspaceInput(workspace);
+    if (!validatedWorkspace) {
+      $("#flow-launch-status").textContent = "请先选择有效的 Git 仓库。";
+      return;
+    }
+    $("#flow-launch-status").textContent = "正在启动隔离 worktree…";
     const body = {
       task,
-      workspace,
+      workspace: validatedWorkspace.path,
       provider: $("#flow-provider").value,
       verifyCommands: $("#flow-commands").value
         .split(/\r?\n/)
@@ -769,10 +1008,11 @@ async function startFlow(event) {
       method: "POST",
       body: JSON.stringify(body),
     });
-    localStorage.setItem("agentflow_workspace", workspace);
+    localStorage.setItem("agentflow_workspace", validatedWorkspace.path);
     localStorage.setItem("agentflow_provider", body.provider);
     $("#flow-launch-status").textContent = `已启动：${result.runId}`;
     await loadFlowRuns();
+    await loadRecentWorkspaces();
     await selectFlowRun(result.runId);
     if (window.matchMedia("(max-width: 760px)").matches) {
       $("main").scrollIntoView({ behavior: "smooth", block: "start" });
@@ -815,6 +1055,10 @@ function setMode(m) {
     welcome.className = "welcome";
     welcome.innerHTML = "<span>↗</span><h3>从左侧启动一个 Agent 团队</h3><p>默认在独立 Git worktree 中运行；全绿后再由人决定是否合并。</p>";
     $("#messages").append(welcome);
+    loadRecentWorkspaces();
+    if ($("#flow-workspace").value.trim()) {
+      validateWorkspaceInput($("#flow-workspace").value, { quiet: true });
+    }
     loadFlowRuns().then(() => {
       const historyValue = $("#flow-history").value;
       if (flowRunId) selectFlowRun(flowRunId);
@@ -871,6 +1115,54 @@ $("#flow-launch").addEventListener("submit", startFlow);
 $("#flow-history").addEventListener("change", (event) => {
   if (event.target.value) selectFlowRun(event.target.value);
 });
+$("#flow-recent-workspaces").addEventListener("change", (event) => {
+  if (!event.target.value) return;
+  $("#flow-workspace").value = event.target.value;
+  validateWorkspaceInput(event.target.value);
+});
+$("#flow-choose-workspace").addEventListener("click", openDirectoryBrowser);
+$("#directory-close").addEventListener("click", closeDirectoryBrowser);
+$("#directory-up").addEventListener("click", () => {
+  if (directoryState?.parent) loadDirectory(directoryState.parent);
+});
+$("#directory-go").addEventListener("click", () => {
+  loadDirectory($("#directory-path").value.trim());
+});
+$("#directory-path").addEventListener("keydown", (event) => {
+  if (event.key === "Enter") {
+    event.preventDefault();
+    loadDirectory(event.currentTarget.value.trim());
+  }
+});
+$("#directory-select-current").addEventListener("click", selectCurrentDirectory);
+$("#directory-modal").addEventListener("click", (event) => {
+  if (event.target === event.currentTarget) closeDirectoryBrowser();
+});
+$("#flow-workspace").addEventListener("change", (event) => {
+  validateWorkspaceInput(event.target.value);
+});
+$("#flow-workspace").addEventListener("input", (event) => {
+  clearTimeout(workspaceValidationTimer);
+  workspaceValidationTimer = setTimeout(() => {
+    if (event.target.value.trim()) validateWorkspaceInput(event.target.value, { quiet: true });
+  }, 500);
+});
+$("#artifact-close").addEventListener("click", () => $("#artifact-modal").close());
+$("#artifact-new-tab").addEventListener("click", () => {
+  if (currentArtifact) window.open(currentArtifact.url, "_blank", "noopener,noreferrer");
+});
+$("#artifact-download").addEventListener("click", () => {
+  if (!currentArtifact) return;
+  const link = document.createElement("a");
+  link.href = currentArtifact.url;
+  link.download = currentArtifact.name;
+  document.body.append(link);
+  link.click();
+  link.remove();
+});
+$("#artifact-modal").addEventListener("click", (event) => {
+  if (event.target === event.currentTarget) event.currentTarget.close();
+});
 $("#approve").addEventListener("click", async () => {
   if (!flowRunId) return;
   $("#approve").disabled = true;
@@ -911,6 +1203,7 @@ resize.observe($("#tree-scroll"));
 window.addEventListener("pagehide", () => {
   epoch++;
   clearTimeout(flowPollTimer);
+  clearTimeout(workspaceValidationTimer);
   flights.forEach((f) => f.cancel());
   flights.clear();
   layer.destroy();

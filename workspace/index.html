@@ -40,8 +40,14 @@
           <label for="flow-task">任务</label>
           <textarea id="flow-task" rows="4" placeholder="例如：给报价模块补上输入校验，并补充测试" required></textarea>
           <label for="flow-workspace">目标仓库</label>
+          <div class="repo-picker-row">
+            <select id="flow-recent-workspaces" aria-label="最近使用的仓库">
+              <option value="">最近仓库</option>
+            </select>
+            <button id="flow-choose-workspace" type="button">浏览目录</button>
+          </div>
           <input id="flow-workspace" placeholder="C:\path\to\git-repo" required />
-          <p class="field-hint">需要是已有 Git 仓库；新项目请先创建目录并执行 git init。</p>
+          <p id="flow-workspace-status" class="repo-status">请选择包含 `.git` 的仓库目录</p>
           <div class="flow-row">
             <label for="flow-provider">执行器</label>
             <select id="flow-provider">
@@ -114,6 +120,43 @@
         </div>
       </section>
     </div>
+
+    <dialog id="directory-modal" class="artifact-modal directory-modal" aria-labelledby="directory-title">
+      <div class="artifact-modal-head">
+        <div>
+          <span class="eyebrow">选择目标仓库</span>
+          <h3 id="directory-title">浏览目录</h3>
+        </div>
+        <button id="directory-close" type="button" aria-label="关闭目录浏览器">关闭</button>
+      </div>
+      <div class="directory-path-row">
+        <button id="directory-up" type="button">上一级</button>
+        <input id="directory-path" placeholder="输入或选择目录路径" />
+        <button id="directory-go" type="button">前往</button>
+      </div>
+      <p id="directory-status" class="directory-status">从磁盘或最近项目开始选择。</p>
+      <div id="directory-list" class="directory-list" tabindex="0"></div>
+      <div class="directory-footer">
+        <span id="directory-current">尚未选择目录</span>
+        <button id="directory-select-current" type="button" disabled>选择当前仓库</button>
+      </div>
+    </dialog>
+
+    <dialog id="artifact-modal" class="artifact-modal" aria-labelledby="artifact-title">
+      <div class="artifact-modal-head">
+        <div>
+          <span class="eyebrow">运行产出物</span>
+          <h3 id="artifact-title">产出物预览</h3>
+        </div>
+        <button id="artifact-close" type="button" aria-label="关闭产出物预览">关闭</button>
+      </div>
+      <div class="artifact-modal-actions">
+        <button id="artifact-new-tab" type="button">新标签打开</button>
+        <button id="artifact-download" type="button">下载文件</button>
+      </div>
+      <p id="artifact-error" class="artifact-error" hidden></p>
+      <pre id="artifact-content" tabindex="0">正在读取产出物…</pre>
+    </dialog>
 
     <script src="./light-ui.js"></script>
     <script src="./app.js"></script>
