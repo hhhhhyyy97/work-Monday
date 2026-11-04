@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { mkdir, readFile, stat } from "node:fs/promises";
+import { mkdir, readFile, rm, stat } from "node:fs/promises";
 import path from "node:path";
 import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
@@ -109,6 +109,7 @@ async function prepareExecutionWorkspace(options, store, runId) {
       baseSha: await gitOutput(options.workspace, ["rev-parse", "HEAD"]),
       branch: await gitOutput(options.workspace, ["branch", "--show-current"]),
       isolated: false,
+      isolation: "in-place",
     };
   }
 
@@ -120,16 +121,51 @@ async function prepareExecutionWorkspace(options, store, runId) {
     throw new Error(`Worktree path already exists: ${worktreePath}`);
   }
   await mkdir(path.dirname(worktreePath), { recursive: true });
-  await execFileAsync("git", ["worktree", "add", "-b", branch, worktreePath, baseSha], {
-    cwd: root,
-    windowsHide: true,
-    maxBuffer: 10 * 1024 * 1024,
-  });
+  try {
+    await execFileAsync("git", ["worktree", "add", "-b", branch, worktreePath, baseSha], {
+      cwd: root,
+      windowsHide: true,
+      maxBuffer: 10 * 1024 * 1024,
+    });
+  } catch (error) {
+    const details = [error?.stderr, error?.stdout, error?.message].filter(Boolean).join("\n");
+    if (!/permission denied|access is denied|EPERM|EACCES|cannot lock ref/i.test(details)) {
+      throw error;
+    }
+    await rm(worktreePath, { recursive: true, force: true });
+    await execFileAsync(
+      "git",
+      ["clone", "--no-hardlinks", "--no-checkout", "--", root, worktreePath],
+      {
+        windowsHide: true,
+        maxBuffer: 10 * 1024 * 1024,
+      },
+    );
+    await execFileAsync("git", ["checkout", "-B", branch, baseSha], {
+      cwd: worktreePath,
+      windowsHide: true,
+      maxBuffer: 10 * 1024 * 1024,
+    });
+    await execFileAsync("git", ["remote", "remove", "origin"], {
+      cwd: worktreePath,
+      windowsHide: true,
+      maxBuffer: 10 * 1024 * 1024,
+    });
+    return {
+      path: worktreePath,
+      baseSha,
+      branch,
+      isolated: true,
+      isolation: "clone",
+      sourceRoot: root,
+    };
+  }
   return {
     path: worktreePath,
     baseSha,
     branch,
     isolated: true,
+    isolation: "worktree",
     sourceRoot: root,
   };
 }
@@ -411,13 +447,14 @@ export async function runWorkflow(options) {
       baseSha: execution.baseSha,
       branch: execution.branch,
       isolated: execution.isolated,
+      isolation: execution.isolation,
       phase: "planning",
     });
     await emit({
       type: "workspace.ready",
       role: "orchestrator",
       message: execution.isolated
-        ? `隔离 worktree 已就绪：${execution.branch}`
+        ? `${execution.isolation === "clone" ? "隔离仓库副本" : "隔离 worktree"}已就绪：${execution.branch}`
         : "正在源工作区中运行",
       data: execution,
     });
@@ -693,7 +730,9 @@ ${reviewerPrompt(
       "",
       "## 交付说明",
       state.isolated
-        ? `改动保留在隔离 worktree 中。请人工复核并合并分支：${state.branch}`
+        ? state.isolation === "clone"
+          ? `改动保留在隔离仓库副本中。请人工复核并合并分支：${state.branch}`
+          : `改动保留在隔离 worktree 中。请人工复核并合并分支：${state.branch}`
         : "工作流在源工作区中运行。提交前请人工复核未提交的 diff。",
     ].join("\n");
     await store.artifact(runId, "final-report.md", report);

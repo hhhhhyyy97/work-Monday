@@ -8,7 +8,96 @@ const { randomUUID } = require("crypto");
 
 const root = __dirname;
 const agentflowRoot = path.resolve(root, "..", "agentflow");
-const runsRoot = path.join(agentflowRoot, "runs");
+const legacyRunsRoot = path.join(agentflowRoot, "runs");
+const fallbackRunsBase = path.join(os.tmpdir(), "agentflow");
+const fallbackRunsRoot = path.join(fallbackRunsBase, "runs");
+
+function prependExecutablePath(directories) {
+  const pathEntries = String(process.env.PATH || "")
+    .split(path.delimiter)
+    .filter(Boolean);
+  const seen = new Set(pathEntries.map((entry) => path.resolve(entry).toLowerCase()));
+  for (const directory of directories) {
+    if (!directory || !fs.existsSync(directory)) continue;
+    const resolved = path.resolve(directory);
+    if (seen.has(resolved.toLowerCase())) continue;
+    pathEntries.unshift(resolved);
+    seen.add(resolved.toLowerCase());
+  }
+  process.env.PATH = pathEntries.join(path.delimiter);
+}
+
+function configureExecutablePaths() {
+  const home = os.homedir();
+  const localAppData = process.env.LOCALAPPDATA || path.join(home, "AppData", "Local");
+  const gitDirectories = [
+    path.join(
+      home,
+      ".cache",
+      "codex-runtimes",
+      "codex-primary-runtime",
+      "dependencies",
+      "native",
+      "git",
+      "cmd",
+    ),
+    "C:\\Program Files\\Git\\cmd",
+    "C:\\Program Files (x86)\\Git\\cmd",
+  ];
+  const codexRoot = path.join(localAppData, "OpenAI", "Codex", "bin");
+  const codexCandidates = [];
+  try {
+    for (const entry of fs.readdirSync(codexRoot, { withFileTypes: true })) {
+      if (!entry.isDirectory()) continue;
+      const executable = path.join(codexRoot, entry.name, "codex.exe");
+      if (fs.existsSync(executable)) {
+        codexCandidates.push({ executable, modifiedAt: fs.statSync(executable).mtimeMs });
+      }
+    }
+  } catch {}
+  codexCandidates.sort((left, right) => right.modifiedAt - left.modifiedAt);
+  prependExecutablePath([...gitDirectories, ...codexCandidates.map((entry) => path.dirname(entry.executable))]);
+  if (!process.env.AGENTFLOW_CODEX_BIN && codexCandidates[0]) {
+    process.env.AGENTFLOW_CODEX_BIN = codexCandidates[0].executable;
+  }
+}
+
+configureExecutablePaths();
+
+function canWriteDirectory(directory) {
+  try {
+    fs.mkdirSync(directory, { recursive: true });
+    const probe = path.join(directory, `.write-probe-${process.pid}-${Date.now()}`);
+    fs.writeFileSync(probe, "");
+    fs.unlinkSync(probe);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function resolveRunsStorage() {
+  const configured = String(process.env.AGENTFLOW_RUNS_ROOT || "").trim();
+  if (configured) {
+    const base = path.resolve(configured);
+    const runs = path.join(base, "runs");
+    fs.mkdirSync(runs, { recursive: true });
+    return { base, runs };
+  }
+  if (canWriteDirectory(legacyRunsRoot)) {
+    return { base: path.resolve(agentflowRoot), runs: path.resolve(legacyRunsRoot) };
+  }
+
+  fs.mkdirSync(fallbackRunsRoot, { recursive: true });
+  return { base: fallbackRunsBase, runs: fallbackRunsRoot };
+}
+
+const runsStorage = resolveRunsStorage();
+const runsRoot = runsStorage.runs;
+const readableRunsRoots = [
+  ...new Set([runsRoot, path.resolve(legacyRunsRoot), path.resolve(fallbackRunsRoot)]),
+];
+process.env.AGENTFLOW_RUNS_ROOT = runsStorage.base;
 const cliPath = path.join(agentflowRoot, "src", "cli.mjs");
 const port = 4178;
 const host = process.env.AGENTFLOW_HOST || "127.0.0.1";
@@ -214,15 +303,36 @@ function safeRunId(value) {
     : null;
 }
 
+async function findRunFile(runId, relativePath) {
+  let lastError;
+  for (const candidateRoot of readableRunsRoots) {
+    try {
+      const filePath = path.join(candidateRoot, runId, relativePath);
+      return { root: candidateRoot, path: filePath, data: await fsp.readFile(filePath) };
+    } catch (error) {
+      lastError = error;
+      if (error.code !== "ENOENT") throw error;
+    }
+  }
+  throw lastError || Object.assign(new Error("Run file not found."), { code: "ENOENT" });
+}
+
+async function findRunDirectory(runId) {
+  const state = await findRunFile(runId, "state.json");
+  return path.join(state.root, runId);
+}
+
 async function loadRun(runId) {
   if (!safeRunId(runId)) throw new Error("Invalid run id.");
-  return JSON.parse(await fsp.readFile(path.join(runsRoot, runId, "state.json"), "utf8"));
+  const state = await findRunFile(runId, "state.json");
+  return JSON.parse(state.data.toString("utf8"));
 }
 
 async function loadEvents(runId, after) {
   if (!safeRunId(runId)) throw new Error("Invalid run id.");
   try {
-    const text = await fsp.readFile(path.join(runsRoot, runId, "events.jsonl"), "utf8");
+    const eventsFile = await findRunFile(runId, "events.jsonl");
+    const text = eventsFile.data.toString("utf8");
     return text
       .split(/\r?\n/)
       .filter(Boolean)
@@ -235,31 +345,36 @@ async function loadEvents(runId, after) {
 }
 
 async function listRuns(limit = 30) {
-  let entries = [];
-  try {
-    entries = await fsp.readdir(runsRoot, { withFileTypes: true });
-  } catch (error) {
-    if (error.code === "ENOENT") return [];
-    throw error;
-  }
-  const runs = [];
-  for (const entry of entries) {
-    if (!entry.isDirectory() || !safeRunId(entry.name)) continue;
+  const runsById = new Map();
+  for (const candidateRoot of readableRunsRoots) {
+    let entries = [];
     try {
-      const run = await loadRun(entry.name);
-      runs.push({
-        id: run.id,
-        task: run.task,
-        status: run.status,
-        phase: run.phase,
-        provider: run.provider,
-        sourceWorkspace: run.sourceWorkspace,
-        createdAt: run.createdAt,
-        updatedAt: run.updatedAt,
-      });
-    } catch {}
+      entries = await fsp.readdir(candidateRoot, { withFileTypes: true });
+    } catch (error) {
+      if (error.code === "ENOENT") continue;
+      throw error;
+    }
+    for (const entry of entries) {
+      if (!entry.isDirectory() || !safeRunId(entry.name)) continue;
+      try {
+        const data = await fsp.readFile(path.join(candidateRoot, entry.name, "state.json"), "utf8");
+        const run = JSON.parse(data);
+        if (!runsById.has(run.id)) {
+          runsById.set(run.id, {
+            id: run.id,
+            task: run.task,
+            status: run.status,
+            phase: run.phase,
+            provider: run.provider,
+            sourceWorkspace: run.sourceWorkspace,
+            createdAt: run.createdAt,
+            updatedAt: run.updatedAt,
+          });
+        }
+      } catch {}
+    }
   }
-  return runs
+  return [...runsById.values()]
     .sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)))
     .slice(0, limit);
 }
@@ -351,6 +466,11 @@ http
       return;
     }
 
+    if (urlPath === "/api/agentflow/storage" && req.method === "GET") {
+      sendJson(res, 200, { runsRoot, readableRunsRoots });
+      return;
+    }
+
     if (urlPath === "/api/agentflow/workspaces/validate" && req.method === "POST") {
       try {
         const body = await readBody(req);
@@ -404,7 +524,7 @@ http
         }
         const body = await readBody(req);
         await fsp.writeFile(
-          path.join(runsRoot, runId, "approval.json"),
+          path.join(await findRunDirectory(runId), "approval.json"),
           JSON.stringify(
             {
               approved: true,
@@ -429,13 +549,12 @@ http
       try {
         const runId = artifactMatch[1];
         if (!safeRunId(runId) || !safeRunId(artifactMatch[2])) throw new Error("Invalid path.");
-        const filePath = path.join(runsRoot, runId, "artifacts", artifactMatch[2]);
-        const data = await fsp.readFile(filePath);
+        const artifact = await findRunFile(runId, path.join("artifacts", artifactMatch[2]));
         res.writeHead(200, {
           "Content-Type": "text/plain; charset=utf-8",
           "Cache-Control": "no-store",
         });
-        res.end(data);
+        res.end(artifact.data);
       } catch (error) {
         res.writeHead(404, { "Content-Type": "text/plain; charset=utf-8" });
         res.end("artifact not found");
@@ -486,4 +605,5 @@ http
   })
   .listen(port, host, () => {
     console.log(`workspace: http://${host}:${port}`);
+    console.log(`runs: ${runsRoot}`);
   });

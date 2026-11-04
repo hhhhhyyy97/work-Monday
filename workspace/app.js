@@ -991,7 +991,7 @@ async function startFlow(event) {
       $("#flow-launch-status").textContent = "请先选择有效的 Git 仓库。";
       return;
     }
-    $("#flow-launch-status").textContent = "正在启动隔离 worktree…";
+    $("#flow-launch-status").textContent = "正在准备隔离工作区…";
     const body = {
       task,
       workspace: validatedWorkspace.path,
@@ -1053,7 +1053,7 @@ function setMode(m) {
     $("#footer-help").textContent = "规划者拆任务，仓库侦察与架构师并行调研，构建者唯一写入，三类评审者并行审查。";
     const welcome = document.createElement("div");
     welcome.className = "welcome";
-    welcome.innerHTML = "<span>↗</span><h3>从左侧启动一个 Agent 团队</h3><p>默认在独立 Git worktree 中运行；全绿后再由人决定是否合并。</p>";
+    welcome.innerHTML = "<span>↗</span><h3>从左侧启动一个 Agent 团队</h3><p>默认在隔离工作区中运行；全绿后再由人决定是否合并。</p>";
     $("#messages").append(welcome);
     loadRecentWorkspaces();
     if ($("#flow-workspace").value.trim()) {

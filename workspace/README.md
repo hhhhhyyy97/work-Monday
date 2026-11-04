@@ -30,6 +30,17 @@ node serve.js
 运行完成后，左侧会话中的产出物按钮会在页面内打开预览，可直接查看 Markdown、patch
 和评审记录，也可在新标签打开或下载文件。
 
+## 运行目录与隔离
+
+服务优先把运行记录写入 `../agentflow/runs`。如果当前启动上下文无权写该目录，会自动
+改用 `%TEMP%\agentflow\runs`，界面仍会合并展示旧目录和新目录中的历史运行。
+
+隔离执行优先创建 Git worktree；如果服务进程无权写源仓库的 `.git` 元数据，则会在运行
+目录中创建独立仓库副本并继续执行。源仓库不会被修改。
+
+如服务未启动，请检查 `%TEMP%\agentflow-launcher.log`、
+`%TEMP%\agentflow-service.stdout.log` 和 `%TEMP%\agentflow-service.stderr.log`。
+
 ## 文件
 
 - `index.html` —— 页面骨架
@@ -37,7 +48,7 @@ node serve.js
 - `running-border.css` —— 运行中的流动边框
 - `light-ui.js` —— Lancer Light UI 的无构建移植（`createLightLayer` / `svgElement`）
 - `app.js` —— 本工作流的数据与交互
-- `../agentflow/` —— 多 Agent 编排器、Pi/Codex Provider、运行状态与隔离 worktree
+- `../agentflow/` —— 多 Agent 编排器、Pi/Codex Provider、运行状态与隔离工作区
 - `../agentflow/dsh-plugin/` —— DeepSeek Harness 的 Pi subagent bundle
 
 ## 数据来源
