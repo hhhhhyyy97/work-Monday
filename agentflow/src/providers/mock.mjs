@@ -29,7 +29,10 @@ const review = {
 export class MockProvider {
   name = "mock";
 
-  async run({ role, onEvent }) {
+  async run({ role, prompt, onEvent }) {
+    if (String(prompt || "").includes("[MOCK_AUTH_REQUIRED]")) {
+      throw new Error("Permission denied: new tool requires approval (mock authorization gate).");
+    }
     const roleText =
       {
         planner: "规划者",

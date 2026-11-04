@@ -41,6 +41,14 @@ node serve.js
 如服务未启动，请检查 `%TEMP%\agentflow-launcher.log`、
 `%TEMP%\agentflow-service.stdout.log` 和 `%TEMP%\agentflow-service.stderr.log`。
 
+## 人工交互
+
+评审达到轮次上限但仍有未关闭意见时，工作流会进入“等待人工处理”并先生成阶段性报告。
+可以选择追加一轮评审、接受当前结果，或结束并生成最终报告。
+
+如果执行步骤遇到工具缺失、登录失效或权限拒绝，工作台会暂停对应步骤，并提出“已处理，
+重试”或“结束并生成报告”。人工选择会写入运行记录，后续报告会包含处理备注。
+
 ## 文件
 
 - `index.html` —— 页面骨架

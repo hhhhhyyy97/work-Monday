@@ -17,6 +17,7 @@ function usage() {
   node src/cli.mjs list
   node src/cli.mjs show <运行ID>
   node src/cli.mjs approve <运行ID> [备注]
+  node src/cli.mjs decide <运行ID> <操作> [备注]
 
 运行选项：
   --workspace <路径>         目标仓库（默认：当前目录）
@@ -77,6 +78,7 @@ function printRun(run) {
   const statuses = {
     running: "运行中",
     waiting_approval: "等待人工批准",
+    waiting_human: "等待人工处理",
     completed: "已通过",
     changes_required: "需要修改",
     failed: "运行失败",
@@ -137,6 +139,26 @@ async function main() {
     console.log(`已批准 ${runId}。编排进程将继续执行。`);
     return;
   }
+  if (command === "decide") {
+    const runId = args._[0];
+    const actionId = args._[1];
+    if (!runId || !actionId) throw new Error("缺少运行 ID 或人工操作。");
+    const run = await store.load(runId);
+    if (!run) throw new Error(`未找到运行：${runId}`);
+    if (run.status !== "waiting_human" || !run.humanRequest) {
+      throw new Error(`该运行不需要人工处理（当前：${run.status}）。`);
+    }
+    if (!run.humanRequest.options.some((option) => option.id === actionId)) {
+      throw new Error(`不支持的人工操作：${actionId}`);
+    }
+    await store.decide(runId, {
+      requestId: run.humanRequest.id,
+      actionId,
+      note: args._.slice(2).join(" "),
+    });
+    console.log(`已提交人工操作 ${actionId}，运行 ${runId} 将继续。`);
+    return;
+  }
   if (command !== "run") throw new Error(`未知命令：${command}`);
 
   if (args.taskFile) {
@@ -177,6 +199,7 @@ async function main() {
   } else {
     const statuses = {
       completed: "已通过",
+      waiting_human: "等待人工处理",
       changes_required: "需要修改",
       failed: "运行失败",
     };

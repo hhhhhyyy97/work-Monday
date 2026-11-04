@@ -2,9 +2,20 @@ $logPath = Join-Path $env:TEMP "agentflow-launcher.log"
 $stdoutPath = Join-Path $env:TEMP "agentflow-service.stdout.log"
 $stderrPath = Join-Path $env:TEMP "agentflow-service.stderr.log"
 
-if (Get-NetTCPConnection -LocalPort 4178 -State Listen -ErrorAction SilentlyContinue) {
-  "Service is already running." | Out-File -LiteralPath $logPath -Encoding utf8 -Append
-  exit 0
+$listener = Get-NetTCPConnection -LocalPort 4178 -State Listen -ErrorAction SilentlyContinue
+if ($listener) {
+  try {
+    $activeRuns = (Invoke-RestMethod -Uri "http://127.0.0.1:4178/api/agentflow/runs?limit=100" -TimeoutSec 3).runs |
+      Where-Object { $_.status -eq "running" -or $_.status -like "waiting_*" }
+    if ($activeRuns) {
+      "Service has active or waiting runs; restart skipped." | Out-File -LiteralPath $logPath -Encoding utf8 -Append
+      exit 0
+    }
+  } catch {
+  }
+  $existingPid = $listener[0].OwningProcess
+  Stop-Process -Id $existingPid -Force -ErrorAction SilentlyContinue
+  Start-Sleep -Seconds 1
 }
 
 $node = Join-Path $env:USERPROFILE ".cache\codex-runtimes\codex-primary-runtime\dependencies\node\bin\node.exe"

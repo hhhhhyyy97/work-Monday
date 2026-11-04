@@ -272,6 +272,7 @@ function clear() {
   $("#run").disabled = false;
   $("#status").textContent = "准备就绪";
   $("#graph-status").textContent = "等待开始";
+  renderHumanInteraction(null);
 }
 
 // ---- GitHub 实时数据 ----
@@ -419,6 +420,7 @@ const flowStatusText = {
   done: "已完成",
   changes: "需要修改",
   waiting_approval: "等待人工批准",
+  waiting_human: "等待人工处理",
   completed: "已通过，待合并",
   changes_required: "仍需修改",
   failed: "运行失败",
@@ -437,6 +439,7 @@ const flowPhaseNames = {
   verifying: "验证中",
   reviewing: "评审中",
   approval: "等待人工批准",
+  human_input: "等待人工处理",
   delivered: "已交付",
   failed: "运行失败",
 };
@@ -451,6 +454,16 @@ const legacyStepLabels = {
 
 function flowPhaseText(phase) {
   return flowPhaseNames[phase] || phase || "运行中";
+}
+
+function flowRunStatusText(run) {
+  if (run?.status === "completed" && run.finalVerdict === "accepted") {
+    return "人工接受，待合并";
+  }
+  if (run?.status === "changes_required" && run.finalVerdict === "blocked") {
+    return "人工结束，报告已生成";
+  }
+  return flowStatusText[run?.status] || run?.status || "运行中";
 }
 
 function flowStepLabel(label) {
@@ -778,6 +791,73 @@ function appendArtifactSection(run) {
   $("#messages").append(section);
 }
 
+async function submitHumanDecision(actionId) {
+  if (!flowRunId) return;
+  const panel = $("#human-interaction");
+  const requestId = panel.dataset.requestId;
+  const note = $("#human-interaction-note").value.trim();
+  const buttons = panel.querySelectorAll("button[data-action]");
+  buttons.forEach((button) => {
+    button.disabled = true;
+  });
+  $("#human-interaction-status").textContent = "正在提交人工选择…";
+  try {
+    await flowApi(`/api/agentflow/runs/${flowRunId}/decide`, {
+      method: "POST",
+      body: JSON.stringify({ requestId, actionId, note }),
+    });
+    $("#human-interaction-status").textContent = "已提交，正在恢复工作流…";
+    await sleep(900);
+    await selectFlowRun(flowRunId);
+  } catch (error) {
+    $("#human-interaction-status").textContent = error.message;
+    buttons.forEach((button) => {
+      button.disabled = false;
+    });
+  }
+}
+
+function renderHumanInteraction(run) {
+  const panel = $("#human-interaction");
+  const request = run?.status === "waiting_human" ? run.humanRequest : null;
+  if (!request) {
+    panel.hidden = true;
+    panel.dataset.requestId = "";
+    return;
+  }
+  const isNewRequest = panel.dataset.requestId !== request.id;
+  panel.hidden = false;
+  panel.dataset.requestId = request.id;
+  $("#human-interaction-title").textContent = request.title || "需要人工处理";
+  $("#human-interaction-message").textContent = request.message || "";
+  const details = $("#human-interaction-details");
+  details.textContent = request.details || "";
+  details.hidden = !request.details;
+  if (isNewRequest) {
+    $("#human-interaction-note").value = "";
+    $("#human-interaction-status").textContent = "";
+  }
+
+  const reportButton = $("#human-report");
+  const reportName = (request.reportArtifact || "").split(/[\\/]/).pop();
+  reportButton.hidden = !reportName;
+  reportButton.onclick = reportName ? () => openArtifact(reportName) : null;
+
+  const actions = $("#human-action-buttons");
+  actions.replaceChildren();
+  for (const option of request.options || []) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.dataset.action = option.id;
+    button.dataset.tone = option.tone || "secondary";
+    button.textContent = option.label || option.id;
+    button.title = option.description || "";
+    button.setAttribute("aria-label", `${option.label || option.id}：${option.description || ""}`);
+    button.addEventListener("click", () => submitHumanDecision(option.id));
+    actions.append(button);
+  }
+}
+
 async function loadFlowRuns() {
   try {
     const { runs } = await flowApi("/api/agentflow/runs");
@@ -834,7 +914,7 @@ function clearFlowView(run) {
       recap.append(title, list);
       $("#messages").append(recap);
     }
-    if (["completed", "changes_required", "failed"].includes(run.status)) {
+    if (["completed", "changes_required", "failed", "waiting_human"].includes(run.status)) {
       appendArtifactSection(run);
     }
     for (const step of run.steps || []) flowNodeFromStep(step);
@@ -842,7 +922,7 @@ function clearFlowView(run) {
 }
 
 async function animateFlowEvent(event, run) {
-  if (!["step.started", "step.finished", "step.failed", "step.changes", "workspace.ready", "run.waiting_approval", "run.finished", "run.failed"].includes(event.type)) {
+  if (!["step.started", "step.finished", "step.failed", "step.blocked", "step.retry", "step.changes", "workspace.ready", "run.waiting_approval", "run.waiting_human", "run.human_decided", "run.finished", "run.failed"].includes(event.type)) {
     return;
   }
   const agent = flowAgent(event);
@@ -860,6 +940,10 @@ async function animateFlowEvent(event, run) {
       if (name !== "final-report.md" && !artifact.endsWith(".patch")) continue;
       bubble.append(createArtifactButton(name, "delivery artifact-button"));
     }
+  }
+  if (event.type === "run.waiting_human" && event.data?.reportArtifact) {
+    const name = event.data.reportArtifact.split(/[\\/]/).pop();
+    if (name) bubble.append(createArtifactButton(name, "delivery artifact-button"));
   }
 
   let step = null;
@@ -900,10 +984,12 @@ async function pollFlow() {
     flowLastStatus = run.status;
     $("#task-title").textContent = run.task;
     $("#footer-help").textContent = `规划者拆任务，仓库侦察与架构师并行调研，构建者唯一写入，${(run.reviewers || []).map((name) => flowReviewNames[name] || name).join(" / ") || "独立评审者"} 独立审查。`;
-    $("#status").textContent = flowStatusText[run.status] || run.status;
+    $("#status").textContent = flowRunStatusText(run);
     $("#graph-status").textContent =
       run.status === "waiting_approval"
         ? "待人工批准"
+        : run.status === "waiting_human"
+          ? "待人工处理"
         : run.status === "completed"
           ? "交付已保存"
           : run.status === "changes_required"
@@ -914,8 +1000,11 @@ async function pollFlow() {
                 ? "评审并行分叉中"
                 : flowPhaseText(run.phase);
     $("#approve").hidden = run.status !== "waiting_approval";
+    renderHumanInteraction(run);
     $("#counts").textContent = `${(run.steps || []).length} 个节点`;
-    if (run.status === "failed") $("#status").title = run.error || "";
+    if (["failed", "waiting_human"].includes(run.status)) {
+      $("#status").title = run.error || run.humanRequest?.message || "";
+    }
     if (["completed", "changes_required", "failed"].includes(run.status)) loadFlowRuns();
   } catch (error) {
     $("#flow-launch-status").textContent = error.message;
@@ -958,9 +1047,10 @@ async function selectFlowRun(runId) {
       localStorage.setItem("agentflow_workspace", run.sourceWorkspace);
       validateWorkspaceInput(run.sourceWorkspace, { quiet: true });
     }
-    $("#status").textContent = flowStatusText[run.status] || run.status;
+    $("#status").textContent = flowRunStatusText(run);
     $("#graph-status").textContent = flowPhaseText(run.phase);
     $("#approve").hidden = run.status !== "waiting_approval";
+    renderHumanInteraction(run);
     $("#flow-history").value = runId;
     loadFlowRuns();
     pollFlow();
@@ -1035,6 +1125,7 @@ function setMode(m) {
   $("#flow-history-box").hidden = m !== "flow";
   $(".token-box").hidden = m === "flow";
   $("#approve").hidden = true;
+  renderHumanInteraction(null);
   if (m === "live") {
     $("#run").textContent = "刷新";
     $("#pause").disabled = true;
@@ -1050,10 +1141,10 @@ function setMode(m) {
     $("#status").textContent = "AgentFlow";
     $("#graph-status").textContent = flowRunId ? "载入运行" : "等待任务";
     $("#task-title").textContent = "多 Agent 协作运行";
-    $("#footer-help").textContent = "规划者拆任务，仓库侦察与架构师并行调研，构建者唯一写入，三类评审者并行审查。";
+    $("#footer-help").textContent = "规划者拆任务，仓库侦察与架构师并行调研，构建者唯一写入，三类评审者并行审查；评审到上限或需要工具授权时会暂停等待人工选择。";
     const welcome = document.createElement("div");
     welcome.className = "welcome";
-    welcome.innerHTML = "<span>↗</span><h3>从左侧启动一个 Agent 团队</h3><p>默认在隔离工作区中运行；全绿后再由人决定是否合并。</p>";
+    welcome.innerHTML = "<span>↗</span><h3>从左侧启动一个 Agent 团队</h3><p>默认在隔离工作区中运行；遇到评审上限或工具授权时会暂停，等待人工选择下一步。</p>";
     $("#messages").append(welcome);
     loadRecentWorkspaces();
     if ($("#flow-workspace").value.trim()) {

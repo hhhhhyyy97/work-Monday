@@ -91,6 +91,21 @@
           </div>
         </div>
         <footer>
+          <section id="human-interaction" class="human-interaction" hidden aria-live="polite">
+            <div class="human-interaction-head">
+              <div>
+                <span class="eyebrow">需要人工处理</span>
+                <h3 id="human-interaction-title">等待选择</h3>
+              </div>
+              <button id="human-report" type="button" hidden>查看阶段性报告</button>
+            </div>
+            <p id="human-interaction-message"></p>
+            <pre id="human-interaction-details" hidden></pre>
+            <label for="human-interaction-note">处理备注</label>
+            <textarea id="human-interaction-note" rows="2" placeholder="可选：记录授权说明、风险接受原因等"></textarea>
+            <div id="human-action-buttons" class="human-action-buttons"></div>
+            <p id="human-interaction-status" role="status"></p>
+          </section>
           <div class="toolbar">
             <button id="run" class="primary">开始运行 →</button>
             <button id="pause" disabled>暂停动效</button>

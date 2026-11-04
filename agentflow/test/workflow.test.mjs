@@ -35,6 +35,16 @@ async function createRepository() {
   return root;
 }
 
+async function waitForStatus(store, runId, status) {
+  let state;
+  for (let attempt = 0; attempt < 200; attempt += 1) {
+    state = await store.load(runId);
+    if (state?.status === status) return state;
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
+  throw new Error(`Timed out waiting for ${runId} to reach ${status}; current=${state?.status}`);
+}
+
 test("runs planning, parallel review, verification, and delivery in an isolated worktree", async () => {
   const source = await createRepository();
   const runsRoot = await mkdtemp(path.join(tmpdir(), "agentflow-runs-"));
@@ -116,6 +126,105 @@ test("waits for human approval before completing", async () => {
     const completed = await running;
     assert.equal(completed.status, "completed");
     assert.ok(completed.steps.some((step) => step.id === "approval" && step.status === "done"));
+  } finally {
+    if (previousRoot === undefined) delete process.env.AGENTFLOW_RUNS_ROOT;
+    else process.env.AGENTFLOW_RUNS_ROOT = previousRoot;
+  }
+});
+
+test("review limit requests a human decision and supports accepting the result", async () => {
+  const source = await createRepository();
+  const runsRoot = await mkdtemp(path.join(tmpdir(), "agentflow-runs-"));
+  const previousRoot = process.env.AGENTFLOW_RUNS_ROOT;
+  process.env.AGENTFLOW_RUNS_ROOT = runsRoot;
+  try {
+    const running = runWorkflow({
+      task: "验证评审上限人工闸门。",
+      workspace: source,
+      provider: "mock",
+      maxRounds: 1,
+      reviewers: ["software"],
+      verifyCommands: ['node -e "process.exit(1)"'],
+      approval: "auto",
+      isolateWithWorktree: true,
+      runId: "review-limit-test",
+    });
+    const store = new RunStore(runsRoot);
+    const waiting = await waitForStatus(store, "review-limit-test", "waiting_human");
+    assert.equal(waiting.humanRequest.kind, "review_limit");
+    assert.deepEqual(
+      waiting.humanRequest.options.map((option) => option.id),
+      ["extend", "accept", "stop"],
+    );
+    assert.ok(waiting.artifacts.includes("artifacts/final-report.md"));
+
+    const reportBeforeDecision = await readFile(
+      path.join(store.runDir("review-limit-test"), "artifacts", "final-report.md"),
+      "utf8",
+    );
+    assert.match(reportBeforeDecision, /等待人工决定下一步/);
+
+    await store.decide("review-limit-test", {
+      requestId: waiting.humanRequest.id,
+      actionId: "accept",
+      note: "接受当前风险，后续人工复核。",
+    });
+    const completed = await running;
+    assert.equal(completed.status, "completed");
+    assert.equal(completed.finalVerdict, "accepted");
+    assert.equal(completed.humanDecisions.length, 1);
+    const finalReport = await readFile(
+      path.join(store.runDir("review-limit-test"), "artifacts", "final-report.md"),
+      "utf8",
+    );
+    assert.match(finalReport, /人工接受/);
+    assert.match(finalReport, /接受当前结果/);
+  } finally {
+    if (previousRoot === undefined) delete process.env.AGENTFLOW_RUNS_ROOT;
+    else process.env.AGENTFLOW_RUNS_ROOT = previousRoot;
+  }
+});
+
+test("authorization errors pause for human retry or report generation", async () => {
+  const source = await createRepository();
+  const runsRoot = await mkdtemp(path.join(tmpdir(), "agentflow-runs-"));
+  const previousRoot = process.env.AGENTFLOW_RUNS_ROOT;
+  process.env.AGENTFLOW_RUNS_ROOT = runsRoot;
+  try {
+    const running = runWorkflow({
+      task: "[MOCK_AUTH_REQUIRED] 验证工具授权人工闸门。",
+      workspace: source,
+      provider: "mock",
+      maxRounds: 1,
+      reviewers: ["software"],
+      verifyCommands: [],
+      approval: "auto",
+      isolateWithWorktree: true,
+      runId: "authorization-test",
+    });
+    const store = new RunStore(runsRoot);
+    const waiting = await waitForStatus(store, "authorization-test", "waiting_human");
+    assert.equal(waiting.humanRequest.kind, "authorization");
+    assert.deepEqual(
+      waiting.humanRequest.options.map((option) => option.id),
+      ["retry", "stop"],
+    );
+    assert.ok(waiting.artifacts.includes("artifacts/final-report.md"));
+
+    await store.decide("authorization-test", {
+      requestId: waiting.humanRequest.id,
+      actionId: "stop",
+      note: "无法提供该工具。",
+    });
+    const stopped = await running;
+    assert.equal(stopped.status, "changes_required");
+    assert.equal(stopped.finalVerdict, "blocked");
+    const report = await readFile(
+      path.join(store.runDir("authorization-test"), "artifacts", "final-report.md"),
+      "utf8",
+    );
+    assert.match(report, /需要人工处理/);
+    assert.match(report, /结束并生成报告/);
   } finally {
     if (previousRoot === undefined) delete process.env.AGENTFLOW_RUNS_ROOT;
     else process.env.AGENTFLOW_RUNS_ROOT = previousRoot;

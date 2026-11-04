@@ -173,6 +173,34 @@ button.artifact-button:hover { border-color: #7899b7; background: #f7f9fb; }
 }
 #directory-current { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #657080; font-size: 11px; }
 footer { border-top: 1px solid #e4e6eb; padding: 18px 24px; }
+.human-interaction {
+  margin: 0 0 16px; padding: 14px; border: 1px solid #d8c49d; border-radius: 8px;
+  background: #fffaf0;
+}
+.human-interaction-head {
+  display: flex; align-items: flex-start; justify-content: space-between; gap: 12px;
+}
+.human-interaction h3 { margin: 5px 0 0; font-size: 15px; }
+.human-interaction > p {
+  margin: 9px 0 0; font-size: 12px; line-height: 1.7; color: #4e5966;
+}
+.human-interaction pre {
+  max-height: 150px; overflow: auto; margin: 10px 0 0; padding: 10px;
+  border: 1px solid #eadcc1; border-radius: 6px; background: #fff;
+  white-space: pre-wrap; overflow-wrap: anywhere; font: 11px/1.65 Consolas, "Microsoft YaHei", monospace;
+}
+.human-interaction label {
+  display: block; margin: 11px 0 5px; font-size: 11px; color: #626e7d;
+}
+.human-interaction textarea {
+  width: 100%; resize: vertical; padding: 7px 9px; border: 1px solid #d9dee5;
+  border-radius: 6px; font-size: 11px; line-height: 1.5;
+}
+.human-action-buttons { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 10px; }
+.human-action-buttons button { padding: 8px 12px; }
+.human-action-buttons button[data-tone="primary"] { background: #292c31; color: #fff; border-color: #292c31; }
+.human-action-buttons button[data-tone="danger"] { color: #9f3b45; border-color: #d9b3b8; background: #fff7f8; }
+#human-interaction-status { min-height: 15px; margin: 8px 0 0; color: #8a5a2f; }
 .toolbar { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
 button.primary { background: #292c31; color: #fff; border-color: #292c31; padding: 10px 16px; }
 footer p { font-size: 11px; color: #687480; margin: 12px 0 0; }
@@ -225,6 +253,8 @@ footer p { font-size: 11px; color: #687480; margin: 12px 0 0; }
   #directory-go { grid-column: 1 / -1; }
   .directory-footer { align-items: stretch; flex-direction: column; }
   #directory-current { white-space: normal; }
+  .human-interaction-head { align-items: stretch; flex-direction: column; }
+  .human-action-buttons { display: grid; grid-template-columns: 1fr; }
 }
 @media (max-width: 1000px) {
   .workspace { grid-template-columns: 210px minmax(300px, 1fr) minmax(280px, 36%); }

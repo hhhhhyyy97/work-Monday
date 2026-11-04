@@ -441,8 +441,7 @@ async function startAgentFlow(body) {
   return { runId };
 }
 
-http
-  .createServer(async (req, res) => {
+const server = http.createServer(async (req, res) => {
     const rawUrl = req.url || "/";
     const urlPath = decodeURIComponent(rawUrl.split("?")[0]);
     const query = rawUrl.includes("?") ? rawUrl.slice(rawUrl.indexOf("?")) : "";
@@ -468,6 +467,26 @@ http
 
     if (urlPath === "/api/agentflow/storage" && req.method === "GET") {
       sendJson(res, 200, { runsRoot, readableRunsRoots });
+      return;
+    }
+
+    if (urlPath === "/api/agentflow/service/restart" && req.method === "POST") {
+      sendJson(res, 202, { restarting: true });
+      res.on("finish", () => {
+        setTimeout(() => {
+          server.close(() => {
+            const child = spawn(process.execPath, [__filename], {
+              cwd: root,
+              env: process.env,
+              detached: true,
+              windowsHide: true,
+              stdio: "ignore",
+            });
+            child.unref();
+            setTimeout(() => process.exit(0), 400);
+          });
+        }, 200);
+      });
       return;
     }
 
@@ -542,6 +561,42 @@ http
       return;
     }
 
+    const decideMatch = urlPath.match(/^\/api\/agentflow\/runs\/([^/]+)\/decide$/);
+    if (decideMatch && req.method === "POST") {
+      try {
+        const runId = decideMatch[1];
+        const run = await loadRun(runId);
+        if (run.status !== "waiting_human" || !run.humanRequest) {
+          throw new Error(`该运行当前不需要人工处理（${run.status}）。`);
+        }
+        const body = await readBody(req);
+        if (String(body.requestId || "") !== run.humanRequest.id) {
+          throw new Error("人工处理请求已变化，请刷新页面后重试。");
+        }
+        const actionId = String(body.actionId || "");
+        if (!(run.humanRequest.options || []).some((option) => option.id === actionId)) {
+          throw new Error(`不支持的人工操作：${actionId}`);
+        }
+        await fsp.writeFile(
+          path.join(await findRunDirectory(runId), "human-decision.json"),
+          JSON.stringify(
+            {
+              requestId: run.humanRequest.id,
+              actionId,
+              note: String(body.note || ""),
+              decidedAt: new Date().toISOString(),
+            },
+            null,
+            2,
+          ),
+        );
+        sendJson(res, 200, { accepted: true, actionId });
+      } catch (error) {
+        sendJson(res, 400, { error: error.message });
+      }
+      return;
+    }
+
     const artifactMatch = urlPath.match(
       /^\/api\/agentflow\/runs\/([^/]+)\/artifacts\/([^/]+)$/,
     );
@@ -602,8 +657,9 @@ http
       });
       fs.createReadStream(file).pipe(res);
     });
-  })
-  .listen(port, host, () => {
-    console.log(`workspace: http://${host}:${port}`);
-    console.log(`runs: ${runsRoot}`);
-  });
+});
+
+server.listen(port, host, () => {
+  console.log(`workspace: http://${host}:${port}`);
+  console.log(`runs: ${runsRoot}`);
+});

@@ -266,6 +266,23 @@ async function waitForApproval(store, runId, timeoutMs = 30 * 60 * 1000) {
   throw new Error("等待人工批准超时。");
 }
 
+async function waitForHumanDecision(store, runId, requestId, timeoutMs = 30 * 60 * 1000) {
+  const startedAt = Date.now();
+  while (Date.now() - startedAt < timeoutMs) {
+    const decision = await store.humanDecision(runId);
+    if (decision?.requestId === requestId) return decision;
+    await new Promise((resolve) => setTimeout(resolve, 600));
+  }
+  throw new Error("等待人工处理超时。");
+}
+
+function isAuthorizationError(error) {
+  const details = [error?.stderr, error?.stdout, error?.message].filter(Boolean).join("\n");
+  return /permission denied|access is denied|not permitted|requires? approval|approval required|unauthorized|forbidden|EACCES|EPERM|command not found|not recognized|tool[^\n]*(unavailable|not available)/i.test(
+    details,
+  );
+}
+
 export async function runWorkflow(options) {
   const workspace = path.resolve(options.workspace || process.cwd());
   const config = await loadWorkflowConfig(workspace, {
@@ -301,6 +318,8 @@ export async function runWorkflow(options) {
     error: null,
     finalVerdict: null,
     artifacts: [],
+    humanRequest: null,
+    humanDecisions: [],
   };
   await store.save(runId, state);
 
@@ -318,6 +337,119 @@ export async function runWorkflow(options) {
   const update = async (patch) => {
     Object.assign(state, patch);
     await store.save(runId, state);
+  };
+
+  const writeReport = async (verdict, reason = "") => {
+    const statusText = {
+      pass: "通过",
+      accepted: "人工接受（仍有未关闭意见）",
+      changes: "需要修改",
+      blocked: "需要人工处理",
+    }[verdict] || verdict;
+    const latestRoundReviews = state.reviews.filter((review) => review.round === state.rounds);
+    const latestRound = state.verification.find((entry) => entry.round === state.rounds);
+    const latestChecks = latestRound?.checks || [];
+    const decisions = (state.humanDecisions || []).map(
+      (decision) =>
+        `- ${decision.title}：${
+          { extend: "追加一轮", accept: "接受当前结果", stop: "结束并生成报告", retry: "已处理并重试" }[
+            decision.actionId
+          ] || decision.actionId
+        }${decision.note ? `；备注：${decision.note}` : ""}`,
+    );
+    const report = [
+      `# AgentFlow 运行报告 ${runId}`,
+      "",
+      `状态：${statusText}`,
+      `任务：${options.task}`,
+      `执行器：${provider.name}`,
+      `源工作区：${workspace}`,
+      `执行工作区：${state.executionWorkspace || "尚未创建"}`,
+      `分支：${state.branch || "（原地运行）"}`,
+      `基线提交：${state.baseSha || "（尚未读取）"}`,
+      `轮次：${state.rounds}`,
+      ...(reason ? ["", "## 当前说明", reason] : []),
+      "",
+      "## 评审结论",
+      ...(latestRoundReviews.length
+        ? latestRoundReviews.map(
+            (review) =>
+              `- ${review.label}：**${{ pass: "通过", changes: "需修改", block: "阻塞" }[review.verdict] || review.verdict}** — ${review.summary}`,
+          )
+        : ["尚无评审结论。"]),
+      "",
+      "## 验证结果",
+      latestChecks.length
+        ? checksSummary(latestChecks)
+        : "当前轮次尚未产生确定性验证结果。",
+      "",
+      "## 人工交互记录",
+      decisions.length ? decisions.join("\n") : "无。",
+      "",
+      "## 交付说明",
+      state.isolated
+        ? state.isolation === "clone"
+          ? `改动保留在隔离仓库副本中。请人工复核并合并分支：${state.branch}`
+          : `改动保留在隔离 worktree 中。请人工复核并合并分支：${state.branch}`
+        : "工作流在源工作区中运行。提交前请人工复核未提交的 diff。",
+    ].join("\n");
+    await store.artifact(runId, "final-report.md", report);
+    if (!state.artifacts.includes("artifacts/final-report.md")) {
+      state.artifacts.push("artifacts/final-report.md");
+    }
+    await update({});
+    return "artifacts/final-report.md";
+  };
+
+  const askHuman = async (request) => {
+    const humanRequest = {
+      id: `${request.kind}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+      createdAt: now(),
+      ...request,
+    };
+    await update({
+      status: "waiting_human",
+      phase: "human_input",
+      humanRequest,
+    });
+    await emit({
+      type: "run.waiting_human",
+      role: "human",
+      label: humanRequest.title,
+      message: humanRequest.message,
+      data: humanRequest,
+    });
+    const decision = await waitForHumanDecision(store, runId, humanRequest.id);
+    if (!humanRequest.options.some((option) => option.id === decision.actionId)) {
+      throw new Error(`人工操作无效：${decision.actionId}`);
+    }
+    state.humanDecisions.push({
+      requestId: humanRequest.id,
+      kind: humanRequest.kind,
+      title: humanRequest.title,
+      actionId: decision.actionId,
+      note: String(decision.note || ""),
+      decidedAt: decision.decidedAt || now(),
+    });
+    await update({
+      status: "running",
+      phase: request.resumePhase || "reviewing",
+      humanRequest: null,
+    });
+    await emit({
+      type: "run.human_decided",
+      role: "human",
+      label: humanRequest.title,
+      message: `人工选择：${
+        humanRequest.options.find((option) => option.id === decision.actionId)?.label || decision.actionId
+      }`,
+      data: {
+        requestId: humanRequest.id,
+        actionId: decision.actionId,
+        note: String(decision.note || ""),
+      },
+    });
+    return decision;
   };
 
   const addStep = async (step) => {
@@ -384,45 +516,115 @@ export async function runWorkflow(options) {
     writeAccess = false,
   }) => {
     const step = await addStep({ id, role, label, parentIds, writeAccess });
-    try {
-      const lastMessagePath = await store.log(runId, `${id}.last-message.txt`);
-      const logPath = await store.log(runId, `${id}.jsonl`);
-      const text = await provider.run({
-        role,
-        prompt,
-        cwd: state.executionWorkspace,
-        schemaPath: schema ? schemaPath(schema) : undefined,
-        writeAccess,
-        lastMessagePath,
-        logPath,
-        onEvent: (event) =>
-          emit({
-            ...event,
+    while (true) {
+      try {
+        const lastMessagePath = await store.log(runId, `${id}.last-message.txt`);
+        const logPath = await store.log(runId, `${id}.jsonl`);
+        const text = await provider.run({
+          role,
+          prompt,
+          cwd: state.executionWorkspace,
+          schemaPath: schema ? schemaPath(schema) : undefined,
+          writeAccess,
+          lastMessagePath,
+          logPath,
+          onEvent: (event) =>
+            emit({
+              ...event,
+              role,
+              stepId: id,
+              label,
+            }),
+        });
+        const artifact = await store.artifact(runId, `${id}.md`, text);
+        const relativeArtifact = path
+          .relative(store.runDir(runId), artifact)
+          .split(path.sep)
+          .join("/");
+        if (!state.artifacts.includes(relativeArtifact)) state.artifacts.push(relativeArtifact);
+        let summary = text.split(/\r?\n/).find((line) => line.trim())?.slice(0, 240) || label;
+        if (schema) {
+          try {
+            summary = parseJsonLoose(text).summary || summary;
+          } catch {}
+        }
+        await finishStep(step, {
+          summary,
+          artifact: relativeArtifact,
+        });
+        return { text, step };
+      } catch (error) {
+        if (!isAuthorizationError(error)) {
+          await failStep(step, error);
+          throw error;
+        }
+        Object.assign(step, {
+          status: "blocked",
+          finishedAt: null,
+          summary: `需要人工处理：${error.message}`,
+        });
+        await update({});
+        await emit({
+          type: "step.blocked",
+          role,
+          stepId: id,
+          label,
+          message: `步骤暂停，需要人工处理权限或工具问题：${error.message}`,
+        });
+        const reportArtifact = await writeReport(
+          "blocked",
+          `步骤“${label}”需要新的工具授权或人工处理。\n\n${error.message}`,
+        );
+        const decision = await askHuman({
+          kind: "authorization",
+          title: "需要人工处理工具或权限",
+          message: `“${label}”无法继续：${error.message}`,
+          details: error.message,
+          reportArtifact,
+          resumePhase: state.phase,
+          options: [
+            {
+              id: "retry",
+              label: "已处理，重试",
+              description: "完成登录、安装工具或授权后，重新执行当前步骤。",
+              tone: "primary",
+            },
+            {
+              id: "stop",
+              label: "结束并生成报告",
+              description: "保留当前工作区并结束本次运行。",
+              tone: "secondary",
+            },
+          ],
+        });
+        if (decision.actionId === "retry") {
+          Object.assign(step, {
+            status: "running",
+            startedAt: now(),
+            finishedAt: null,
+            summary: "",
+            artifact: null,
+          });
+          await update({});
+          await emit({
+            type: "step.retry",
             role,
             stepId: id,
             label,
-          }),
-      });
-      const artifact = await store.artifact(runId, `${id}.md`, text);
-      const relativeArtifact = path
-        .relative(store.runDir(runId), artifact)
-        .split(path.sep)
-        .join("/");
-      if (!state.artifacts.includes(relativeArtifact)) state.artifacts.push(relativeArtifact);
-      let summary = text.split(/\r?\n/).find((line) => line.trim())?.slice(0, 240) || label;
-      if (schema) {
-        try {
-          summary = parseJsonLoose(text).summary || summary;
-        } catch {}
+            message: `已获得人工确认，重新执行：${label}`,
+          });
+          continue;
+        }
+        Object.assign(step, {
+          status: "changes",
+          finishedAt: now(),
+          summary: "人工决定结束本次运行。",
+        });
+        await update({});
+        const stopped = new Error("人工决定结束本次运行并生成报告。");
+        stopped.code = "HUMAN_STOPPED";
+        throw stopped;
       }
-      await finishStep(step, {
-        summary,
-        artifact: relativeArtifact,
-      });
-      return { text, step };
-    } catch (error) {
-      await failStep(step, error);
-      throw error;
     }
   };
 
@@ -521,8 +723,10 @@ ${jsonBlock(plan)}`,
     let latestBuilderText = "";
     let previousReviewText = "";
     let finalVerdict = "changes";
+    let reviewRound = 1;
 
-    for (let round = 1; round <= config.maxRounds; round += 1) {
+    while (reviewRound <= config.maxRounds) {
+      const round = reviewRound;
       state.rounds = round;
       await update({ phase: round === 1 ? "building" : "fixing" });
       const buildId = `build-${round}`;
@@ -680,7 +884,53 @@ ${reviewerPrompt(
           : "所有必需的评审和验证闸门均已通过。",
       });
       if (!needsFix) break;
-      if (round === config.maxRounds) break;
+      if (round < config.maxRounds) {
+        reviewRound += 1;
+        continue;
+      }
+
+      const reportArtifact = await writeReport(
+        "changes",
+        `已达到评审轮次上限（${config.maxRounds} 轮），但仍有评审意见或验证失败，等待人工决定下一步。`,
+      );
+      const decision = await askHuman({
+        kind: "review_limit",
+        title: "评审已达到上限",
+        message: `已完成 ${config.maxRounds} 轮评审，但仍有未通过的检查。请选择下一步。`,
+        details: previousReviewText,
+        reportArtifact,
+        resumePhase: "reviewing",
+        options: [
+          {
+            id: "extend",
+            label: "追加一轮评审",
+            description: "增加一轮修复、验证和独立评审。",
+            tone: "primary",
+          },
+          {
+            id: "accept",
+            label: "接受当前结果",
+            description: "保留当前改动和未关闭意见，完成运行并生成报告。",
+            tone: "secondary",
+          },
+          {
+            id: "stop",
+            label: "结束并生成报告",
+            description: "停止继续执行，保留当前工作区供人工复核。",
+            tone: "danger",
+          },
+        ],
+      });
+      if (decision.actionId === "extend") {
+        config.maxRounds = Math.min(10, config.maxRounds + 1);
+        await update({ maxRounds: config.maxRounds });
+        reviewRound += 1;
+        continue;
+      }
+      if (decision.actionId === "accept") {
+        finalVerdict = "accepted";
+      }
+      break;
     }
 
     await update({ phase: "approval", finalVerdict });
@@ -705,47 +955,22 @@ ${reviewerPrompt(
       });
     }
 
-    const report = [
-      `# AgentFlow 运行报告 ${runId}`,
-      "",
-      `状态：${finalVerdict === "pass" ? "通过" : "需要修改"}`,
-      `任务：${options.task}`,
-      `执行器：${provider.name}`,
-      `源工作区：${workspace}`,
-      `执行工作区：${state.executionWorkspace}`,
-      `分支：${state.branch || "（原地运行）"}`,
-      `基线提交：${state.baseSha}`,
-      `轮次：${state.rounds}`,
-      "",
-      "## 评审结论",
-      ...latestReviews.map(
-        (review) =>
-          `- ${review.label}：**${{ pass: "通过", changes: "需修改", block: "阻塞" }[review.verdict] || review.verdict}** — ${review.summary}`,
-      ),
-      "",
-      "## 验证结果",
-      latestChecks.length
-        ? checksSummary(latestChecks)
-        : "未配置验证命令。在将此结果视为可发布质量前，请先配置 `verifyCommands`。",
-      "",
-      "## 交付说明",
-      state.isolated
-        ? state.isolation === "clone"
-          ? `改动保留在隔离仓库副本中。请人工复核并合并分支：${state.branch}`
-          : `改动保留在隔离 worktree 中。请人工复核并合并分支：${state.branch}`
-        : "工作流在源工作区中运行。提交前请人工复核未提交的 diff。",
-    ].join("\n");
-    await store.artifact(runId, "final-report.md", report);
-    if (!state.artifacts.includes("artifacts/final-report.md")) {
-      state.artifacts.push("artifacts/final-report.md");
-    }
+    await writeReport(
+      finalVerdict,
+      finalVerdict === "accepted"
+        ? "人工选择接受当前结果。仍有评审意见未关闭，请在合并前复核报告。"
+        : "",
+    );
     const patchArtifact = `artifacts/round-${state.rounds}.patch`;
     if (!state.artifacts.includes(patchArtifact)) state.artifacts.push(patchArtifact);
-    const finalStatus = finalVerdict === "pass" ? "completed" : "changes_required";
+    const finalStatus = ["pass", "accepted"].includes(finalVerdict)
+      ? "completed"
+      : "changes_required";
     await update({
       status: finalStatus,
       phase: "delivered",
       finalVerdict,
+      humanRequest: null,
       completedAt: now(),
     });
     await emit({
@@ -755,10 +980,30 @@ ${reviewerPrompt(
       message:
         finalVerdict === "pass"
           ? "工作流已完成，仍需人工合并。"
+          : finalVerdict === "accepted"
+            ? "工作流已按人工决定结束，当前结果仍需复核后合并。"
           : `已达到评审轮次上限，共收到 ${latestReviews.length} 条评审结论，仍需修改。`,
     });
     return state;
   } catch (error) {
+    if (error.code === "HUMAN_STOPPED") {
+      await writeReport("blocked", error.message);
+      await update({
+        status: "changes_required",
+        phase: "delivered",
+        finalVerdict: "blocked",
+        humanRequest: null,
+        error: null,
+        completedAt: now(),
+      });
+      await emit({
+        type: "run.finished",
+        role: "human",
+        status: "changes_required",
+        message: "人工结束当前运行，报告已生成。",
+      });
+      return state;
+    }
     await update({
       status: "failed",
       phase: "failed",

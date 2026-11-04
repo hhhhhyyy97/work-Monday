@@ -121,4 +121,15 @@ export class RunStore {
   async approval(runId) {
     return readJson(path.join(this.runDir(runId), "approval.json"));
   }
+
+  async decide(runId, decision) {
+    await writeJson(path.join(this.runDir(runId), "human-decision.json"), {
+      ...decision,
+      decidedAt: now(),
+    });
+  }
+
+  async humanDecision(runId) {
+    return readJson(path.join(this.runDir(runId), "human-decision.json"));
+  }
 }
