@@ -192,7 +192,6 @@ function sendJson(res, status, value) {
   res.writeHead(status, {
     "Content-Type": "application/json; charset=utf-8",
     "Cache-Control": "no-store",
-    "Access-Control-Allow-Origin": "*",
   });
   res.end(JSON.stringify(value));
 }
